@@ -1,4 +1,4 @@
-use std::os::raw::{c_char, c_float, c_int, c_short, c_uchar, c_uint, c_ushort};
+use std::os::raw::{c_char, c_float, c_int, c_long, c_short, c_uchar, c_uint, c_ushort};
 
 #[repr(C)]
 pub struct mecab_node_t {
@@ -24,7 +24,7 @@ pub struct mecab_node_t {
     pub beta: c_float,
     pub prob: c_float,
     pub wcost: c_short,
-    pub cost: i64,
+    pub cost: c_long,
 }
 
 #[repr(C)]
