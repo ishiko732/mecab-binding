@@ -1,0 +1,95 @@
+{
+  "name": "mecab-binding",
+  "version": "0.1.0",
+  "description": "MeCab Japanese morphological analyzer binding for Node.js via napi-rs",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "browser": "dist/browser.js",
+  "exports": {
+    ".": {
+      "browser": "./dist/browser.js",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./ipadic.data": {
+      "types": "./ipadic.data.d.ts",
+      "default": "./dist/ipadic.data"
+    }
+  },
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "mecab",
+    "japanese",
+    "morphological-analysis",
+    "nlp",
+    "napi-rs"
+  ],
+  "files": [
+    "dist",
+    "!dist/*.debug.wasm",
+    "ipadic.data.d.ts"
+  ],
+  "napi": {
+    "binaryName": "mecab-binding",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc",
+      "wasm32-wasip1-threads"
+    ]
+  },
+  "engines": {
+    "node": ">= 10"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "build": "napi build --platform --release --esm -o ./dist",
+    "build:wasm": "napi build --platform --release --esm --target wasm32-wasip1-threads -o ./dist",
+    "build:dict": "node scripts/compile-dict.mjs",
+    "postbuild": "pnpm build:dict",
+    "format": "run-p format:biome format:rs format:toml",
+    "format:biome": "biome format --write .",
+    "format:toml": "taplo format",
+    "format:rs": "cargo fmt",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "vitest run",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
+    "@emnapi/core": "^1.9.0",
+    "@emnapi/runtime": "^1.9.0",
+    "@napi-rs/cli": "^3.2.0",
+    "@napi-rs/wasm-runtime": "^1.1.1",
+    "@oxc-node/core": "^0.0.35",
+    "@taplo/cli": "^0.7.0",
+    "@tybys/wasm-util": "^0.10.1",
+    "@types/node": "^24.12.0",
+    "emnapi": "^1.9.0",
+    "npm-run-all2": "^8.0.4",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.0"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "optionalDependencies": {
+    "mecab-binding-darwin-x64": "0.1.0",
+    "mecab-binding-darwin-arm64": "0.1.0",
+    "mecab-binding-linux-x64-gnu": "0.1.0",
+    "mecab-binding-win32-x64-msvc": "0.1.0",
+    "mecab-binding-linux-x64-musl": "0.1.0",
+    "mecab-binding-linux-arm64-gnu": "0.1.0",
+    "mecab-binding-linux-arm64-musl": "0.1.0",
+    "mecab-binding-win32-arm64-msvc": "0.1.0",
+    "mecab-binding-wasm32-wasi": "0.1.0"
+  }
+}
