@@ -11,6 +11,8 @@ const MCBD_MAGIC: &[u8; 4] = b"MCBD";
 const MCBD_VERSION: u32 = 1;
 /// Fixed list of dictionary files to pack
 const DICT_FILES: &[&str] = &["char.bin", "dicrc", "matrix.bin", "sys.dic", "unk.dic"];
+/// Maximum decompressed payload size (64 MiB)
+const MAX_PAYLOAD_SIZE: usize = 64 * 1024 * 1024;
 
 /// Pack a MeCab dictionary directory into a single gzip-compressed `.data` file (MCBD format).
 #[napi]
@@ -27,6 +29,14 @@ pub fn pack_dict(dict_dir: String, output_path: String) -> Result<()> {
         let data = std::fs::read(&file_path).map_err(|e| {
             Error::from_reason(format!("Failed to read {}: {}", file_path.display(), e))
         })?;
+        if data.len() > u32::MAX as usize {
+            return Err(Error::from_reason(format!(
+                "File {} is too large ({} bytes, max {})",
+                name,
+                data.len(),
+                u32::MAX
+            )));
+        }
         let name_bytes = name.as_bytes();
         payload.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
         payload.extend_from_slice(name_bytes);
@@ -59,14 +69,34 @@ pub struct McbdFile {
     pub data: Vec<u8>,
 }
 
+/// Validate that a file name is a plain filename (no path traversal).
+fn validate_filename(name: &str) -> std::result::Result<(), String> {
+    if name.is_empty() {
+        return Err("Empty file name in MCBD".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!("Invalid file name in MCBD: {}", name));
+    }
+    Ok(())
+}
+
 /// Decompress and parse MCBD buffer. Returns list of (name, data) pairs.
+/// Rejects payloads larger than 20 MiB after decompression.
 pub fn parse_mcbd(compressed: &[u8]) -> std::result::Result<Vec<McbdFile>, String> {
-    // Gzip decompress
+    // Gzip decompress with size limit
     let mut decoder = GzDecoder::new(compressed);
     let mut payload = Vec::new();
     decoder
+        .take(MAX_PAYLOAD_SIZE as u64 + 1)
         .read_to_end(&mut payload)
         .map_err(|e| format!("Failed to decompress gzip: {}", e))?;
+    if payload.len() > MAX_PAYLOAD_SIZE {
+        return Err(format!(
+            "Decompressed payload too large ({} bytes, max {} bytes)",
+            payload.len(),
+            MAX_PAYLOAD_SIZE
+        ));
+    }
 
     // Read helper
     let read_u32 = |off: &mut usize| -> std::result::Result<u32, String> {
@@ -103,6 +133,8 @@ pub fn parse_mcbd(compressed: &[u8]) -> std::result::Result<Vec<McbdFile>, Strin
             .map_err(|e| format!("Invalid UTF-8 in file name: {}", e))?
             .to_string();
         offset += name_len;
+
+        validate_filename(&name)?;
 
         let data_len = read_u32(&mut offset)? as usize;
         if offset + data_len > payload.len() {

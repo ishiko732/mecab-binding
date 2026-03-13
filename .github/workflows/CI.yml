@@ -47,7 +47,7 @@ jobs:
         run: pnpm install
 
       - name: Biome
-        run: pnpm check
+        run: pnpm lint
 
       - name: Cargo fmt
         run: cargo fmt -- --check
