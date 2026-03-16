@@ -79,28 +79,32 @@ impl Tagger {
     let files = pack::parse_mcbd(data)
       .map_err(|e| Error::from_reason(format!("Failed to parse MCBD: {}", e)))?;
 
-    let temp_dir = std::env::temp_dir().join("mecab-dict");
-    std::fs::create_dir_all(&temp_dir).map_err(|e| {
+    let dict_dir = PathBuf::from("/mecab-dict");
+    std::fs::create_dir_all(&dict_dir).map_err(|e| {
       Error::from_reason(format!(
-        "Failed to create temp dir {}: {}",
-        temp_dir.display(),
+        "Failed to create dict dir {}: {}",
+        dict_dir.display(),
         e
       ))
     })?;
 
-    // Write dict files to temp dir
+    // Write dict files and an empty mecabrc to avoid requiring /dev/null
     for file in &files {
-      let file_path = temp_dir.join(&file.name);
+      let file_path = dict_dir.join(&file.name);
       std::fs::write(&file_path, &file.data).map_err(|e| {
         Error::from_reason(format!("Failed to write {}: {}", file_path.display(), e))
       })?;
     }
+    let mecabrc = dict_dir.join("mecabrc");
+    std::fs::write(&mecabrc, b"").map_err(|e| {
+      Error::from_reason(format!("Failed to write mecabrc: {}", e))
+    })?;
 
-    let args = format!("-d {} -r /dev/null", temp_dir.display());
+    let args = format!("-d {} -r {}", dict_dir.display(), mecabrc.display());
     let c_args = CString::new(args).map_err(|e| Error::from_reason(e.to_string()))?;
     let ptr = unsafe { ffi::mecab_new2(c_args.as_ptr()) };
     if ptr.is_null() {
-      let _ = std::fs::remove_dir_all(&temp_dir);
+      let _ = std::fs::remove_dir_all(&dict_dir);
       let err = unsafe { ffi::mecab_strerror(std::ptr::null_mut()) };
       let msg = if err.is_null() {
         "Failed to create MeCab tagger from buffer".to_string()
@@ -112,7 +116,7 @@ impl Tagger {
     Ok(Tagger {
       inner: ptr,
       _nbest_sentence: None,
-      _temp_dir: Some(temp_dir),
+      _temp_dir: Some(dict_dir),
     })
   }
 
