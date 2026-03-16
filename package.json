@@ -17,6 +17,10 @@
       "types": "./ipadic.data.d.ts",
       "default": "./dist/ipadic.data"
     },
+    "./grammars.data": {
+      "types": "./grammars.data.d.ts",
+      "default": "./dist/grammars.data"
+    },
     "./dynamic-wasi": {
       "browser": "./dist/dynamic-wasi-browser.js",
       "types": "./dist/dynamic-wasi.d.ts",
@@ -36,7 +40,8 @@
   "files": [
     "dist",
     "!dist/*.debug.wasm",
-    "ipadic.data.d.ts"
+    "ipadic.data.d.ts",
+    "grammars.data.d.ts"
   ],
   "napi": {
     "binaryName": "mecab-binding",
@@ -82,21 +87,28 @@
     "@taplo/cli": "^0.7.0",
     "@tybys/wasm-util": "^0.10.1",
     "@types/node": "^24.12.0",
+    "better-sqlite3": "^12.8.0",
     "emnapi": "^1.9.0",
+    "node-html-parser": "^7.1.0",
     "npm-run-all2": "^8.0.4",
     "typescript": "^5.9.2",
     "vitest": "^4.1.0"
   },
   "packageManager": "pnpm@10.32.1",
   "optionalDependencies": {
-    "mecab-binding-darwin-x64": "0.1.0",
     "mecab-binding-darwin-arm64": "0.1.0",
-    "mecab-binding-linux-x64-gnu": "0.1.0",
-    "mecab-binding-win32-x64-msvc": "0.1.0",
-    "mecab-binding-linux-x64-musl": "0.1.0",
+    "mecab-binding-darwin-x64": "0.1.0",
     "mecab-binding-linux-arm64-gnu": "0.1.0",
     "mecab-binding-linux-arm64-musl": "0.1.0",
+    "mecab-binding-linux-x64-gnu": "0.1.0",
+    "mecab-binding-linux-x64-musl": "0.1.0",
+    "mecab-binding-wasm32-wasi": "0.1.0",
     "mecab-binding-win32-arm64-msvc": "0.1.0",
-    "mecab-binding-wasm32-wasi": "0.1.0"
+    "mecab-binding-win32-x64-msvc": "0.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

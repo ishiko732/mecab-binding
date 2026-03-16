@@ -96,9 +96,8 @@ impl Tagger {
       })?;
     }
     let mecabrc = dict_dir.join("mecabrc");
-    std::fs::write(&mecabrc, b"").map_err(|e| {
-      Error::from_reason(format!("Failed to write mecabrc: {}", e))
-    })?;
+    std::fs::write(&mecabrc, b"")
+      .map_err(|e| Error::from_reason(format!("Failed to write mecabrc: {}", e)))?;
 
     let args = format!("-d {} -r {}", dict_dir.display(), mecabrc.display());
     let c_args = CString::new(args).map_err(|e| Error::from_reason(e.to_string()))?;

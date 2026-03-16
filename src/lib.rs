@@ -5,6 +5,7 @@
 mod dict_info;
 #[allow(non_snake_case, dead_code)]
 mod ffi;
+mod grammar;
 mod node;
 mod pack;
 mod tagger;
