@@ -24,6 +24,7 @@ pub struct MecabNode {
 }
 
 /// Convert a C node linked-list to a Vec<MecabNode>, skipping BOS/EOS nodes.
+#[allow(clippy::unnecessary_cast)]
 pub fn nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
   let mut nodes = Vec::new();
   let mut current = node_ptr;
@@ -52,7 +53,7 @@ pub fn nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
         beta: node.beta as f64,
         prob: node.prob as f64,
         wcost: node.wcost as i32,
-        cost: node.cost,
+        cost: node.cost as i64,
       });
     }
     current = node.next;
@@ -61,6 +62,7 @@ pub fn nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
 }
 
 /// Convert a C node linked-list to a Vec<MecabNode>, including BOS/EOS.
+#[allow(clippy::unnecessary_cast)]
 pub fn all_nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
   let mut nodes = Vec::new();
   let mut current = node_ptr;
@@ -91,7 +93,7 @@ pub fn all_nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
       beta: node.beta as f64,
       prob: node.prob as f64,
       wcost: node.wcost as i32,
-      cost: node.cost,
+      cost: node.cost as i64,
     });
     current = node.next;
   }

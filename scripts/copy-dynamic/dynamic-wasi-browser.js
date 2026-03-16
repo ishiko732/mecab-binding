@@ -3,7 +3,9 @@ import {
   instantiateNapiModuleSync as __emnapiInstantiateNapiModuleSync,
   WASI as __WASI,
 } from '@napi-rs/wasm-runtime'
+import { memfs as __memfs } from '@napi-rs/wasm-runtime/fs'
 
+const { fs: __fs, vol: __volume } = __memfs()
 /**
  * Initialize the MeCab NAPI module with the given WASM binary and worker URL.
  *
@@ -17,6 +19,10 @@ export async function initMecab(options) {
 
   const __wasi = new __WASI({
     version: 'preview1',
+    fs: __fs,
+    preopens: {
+      '/': '/',
+    },
   })
 
   const __emnapiContext = __emnapiGetDefaultContext()
