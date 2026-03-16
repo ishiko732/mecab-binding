@@ -84,7 +84,7 @@ fn validate_filename(name: &str) -> std::result::Result<(), String> {
 /// Rejects payloads larger than 20 MiB after decompression.
 pub fn parse_mcbd(compressed: &[u8]) -> std::result::Result<Vec<McbdFile>, String> {
     // Gzip decompress with size limit
-    let mut decoder = GzDecoder::new(compressed);
+    let decoder = GzDecoder::new(compressed);
     let mut payload = Vec::new();
     decoder
         .take(MAX_PAYLOAD_SIZE as u64 + 1)

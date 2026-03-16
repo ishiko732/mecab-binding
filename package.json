@@ -19,6 +19,12 @@
     },
     "./mecab.wasm": {
       "default": "./dist/mecab-binding.wasm32-wasi.wasm"
+    },
+    "./dynamic-wasi": {
+      "browser": "./dist/dynamic-wasi-browser.js",
+      "types": "./dist/dynamic-wasi.d.ts",
+      "require": "./dist/dynamic-wasi.cjs",
+      "default": "./dist/dynamic-wasi.cjs"
     }
   },
   "license": "MIT",
@@ -57,6 +63,7 @@
     "build": "napi build --platform --release --esm -o ./dist",
     "build:wasm": "napi build --platform --release --esm --target wasm32-wasip1-threads -o ./dist",
     "build:dict": "node scripts/compile-dict.mjs",
+    "build:dynamic": "node scripts/copy-dynamic/index.js",
     "postbuild": "pnpm build:dict",
     "format": "run-p format:biome format:rs format:toml",
     "format:biome": "biome format --write .",
