@@ -52,7 +52,7 @@ pub fn nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
         beta: node.beta as f64,
         prob: node.prob as f64,
         wcost: node.wcost as i32,
-        cost: node.cost as i64,
+        cost: node.cost,
       });
     }
     current = node.next;
@@ -91,7 +91,7 @@ pub fn all_nodes_to_vec(node_ptr: *const ffi::mecab_node_t) -> Vec<MecabNode> {
       beta: node.beta as f64,
       prob: node.prob as f64,
       wcost: node.wcost as i32,
-      cost: node.cost as i64,
+      cost: node.cost,
     });
     current = node.next;
   }

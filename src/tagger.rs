@@ -7,16 +7,6 @@ use napi_derive::napi;
 use std::ffi::{CStr, CString};
 use std::path::PathBuf;
 
-/// Simple random u64 using system time as seed (no extra crate needed).
-fn random_u64() -> u64 {
-  use std::collections::hash_map::DefaultHasher;
-  use std::hash::{Hash, Hasher};
-  let mut hasher = DefaultHasher::new();
-  std::time::SystemTime::now().hash(&mut hasher);
-  std::thread::current().id().hash(&mut hasher);
-  hasher.finish()
-}
-
 #[napi]
 pub struct Tagger {
   inner: *mut ffi::mecab_t,
@@ -89,8 +79,7 @@ impl Tagger {
     let files = pack::parse_mcbd(data)
       .map_err(|e| Error::from_reason(format!("Failed to parse MCBD: {}", e)))?;
 
-    // Create temp directory with random suffix
-    let temp_dir = std::env::temp_dir().join(format!("mecab-dict-{:x}", random_u64()));
+    let temp_dir = std::env::temp_dir().join("mecab-dict");
     std::fs::create_dir_all(&temp_dir).map_err(|e| {
       Error::from_reason(format!(
         "Failed to create temp dir {}: {}",
