@@ -150,7 +150,8 @@ fn main() {
       .flag("-Wno-unused-parameter")
       .flag("-Wno-register")
       .flag("-Wno-deprecated-register")
-      .flag("-Wno-narrowing");
+      .flag("-Wno-narrowing")
+      .flag("-Wno-string-plus-int");
     println!("cargo:rustc-link-lib=static=c++");
     println!("cargo:rustc-link-lib=static=c++abi");
   } else if target_os == "macos" || target_os == "linux" {
