@@ -46,25 +46,33 @@ function App() {
 	const [parseError, setParseError] = useState<string | null>(null)
 	const [showGrammarEditor, setShowGrammarEditor] = useState(false)
 	const [grammarText, setGrammarText] = useState(DEFAULT_GRAMMAR)
-	const { tagger, GrammarMatcher, loading: taggerLoading, error: taggerError } = useTagger()
+	const { tagger, GrammarMatcher, gzMatcher, loading: taggerLoading, error: taggerError } = useTagger()
 
 	const matcher = useMemo(() => {
 		if (!GrammarMatcher) return null
 		try {
-			return new GrammarMatcher(grammarText)
-		} catch {
+			const base = gzMatcher ? gzMatcher.cloneMatcher() : new GrammarMatcher('')
+			console.log('gzMatcher rules:', gzMatcher?.ruleNames().length ?? 0)
+			if (grammarText.trim()) base.merge(grammarText)
+			console.log('matcher rules:', base.ruleNames())
+			return base
+		} catch (e) {
+			console.error('matcher build error:', e)
 			return null
 		}
-	}, [grammarText, GrammarMatcher])
+	}, [grammarText, GrammarMatcher, gzMatcher])
 
 	const handleParse = useCallback(() => {
 		if (!tagger || !input.trim()) return
 		setParseError(null)
 		try {
 			const result = tagger.parseToNodes(input)
+			console.log('nodes:', result)
 			setNodes(result)
 			if (matcher) {
-				setGrammarMatches(matcher.findAll(result))
+				const matches = matcher.findAll(result)
+				console.log('grammarMatches:', matches)
+				setGrammarMatches(matches)
 			} else {
 				setGrammarMatches([])
 			}
@@ -193,11 +201,11 @@ function App() {
 				<div style={{ marginBottom: '1rem' }}>
 					<h3 style={{ fontSize: '0.9rem', color: '#555', marginBottom: '0.5rem' }}>Grammar Patterns Found</h3>
 					<div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-						{grammarMatches.map((m) => {
+						{grammarMatches.map((m, idx) => {
 							const levelColor = m.levels[0] ? LEVEL_COLORS[m.levels[0]] || '#666' : '#666'
 							return (
 								<div
-									key={`${m.rule}-${m.start}`}
+									key={`${m.rule}-${m.start}-${idx}`}
 									style={{
 										padding: '0.5rem 0.75rem',
 										background: '#f8f9ff',
@@ -236,6 +244,25 @@ function App() {
 										))}
 									</div>
 									{m.description && <div style={{ color: '#777', fontSize: '0.75rem' }}>{m.description}</div>}
+									{m.connection && (
+										<div style={{ color: '#999', fontSize: '0.7rem', marginTop: '0.15rem' }}>
+											接続: {m.connection}
+										</div>
+									)}
+									{m.examples && m.examples.length > 0 && (
+										<div style={{ marginTop: '0.25rem', paddingLeft: '0.5rem', borderLeft: '2px solid #e0e0e0' }}>
+											{m.examples.slice(0, 3).map((ex) => (
+												<div key={ex.sentence} style={{ fontSize: '0.7rem', color: '#888', lineHeight: 1.6 }}>
+													{ex.sentence}
+													{ex.translations && ex.translations.length > 0 && (
+														<span style={{ color: '#aaa', marginLeft: '0.5rem' }}>
+															({ex.translations.map((t: { text: string }) => t.text).join(' / ')})
+														</span>
+													)}
+												</div>
+											))}
+										</div>
+									)}
 								</div>
 							)
 						})}

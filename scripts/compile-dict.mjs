@@ -21,6 +21,14 @@ if (!existsSync(inputDir)) {
 	execSync(`tar xzf "${IPADIC_TARBALL}" --strip-components=1 -C "${inputDir}"`, { stdio: 'inherit' })
 }
 
+// Copy grammars.data to dist if available
+const grammarsSrc = resolve(root, 'sources', 'grammars.data')
+const grammarsDst = resolve(root, 'dist', 'grammars.data')
+if (existsSync(grammarsSrc)) {
+	copyFileSync(grammarsSrc, grammarsDst)
+	console.log(`Copied grammars.data to ${grammarsDst}`)
+}
+
 if (existsSync(outputDir)) {
 	console.log('Dictionary already compiled, skipping')
 	process.exit(0)
@@ -55,3 +63,4 @@ try {
 	console.error('Failed to compile dictionary:', err.message)
 	process.exit(1)
 }
+
