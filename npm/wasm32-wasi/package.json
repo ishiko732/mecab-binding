@@ -1,0 +1,43 @@
+{
+  "name": "mecab-binding-wasm32-wasi",
+  "version": "0.1.0",
+  "cpu": [
+    "wasm32"
+  ],
+  "main": "mecab-binding.wasi.cjs",
+  "exports": {
+    ".": {
+      "browser": "./mecab-binding.wasi-browser.js",
+      "require": "./mecab-binding.wasi.cjs",
+      "default": "./mecab-binding.wasi.cjs"
+    },
+    "./wasi-worker": {
+      "browser": "./wasi-worker-browser.mjs",
+      "default": "./wasi-worker.mjs"
+    },
+    "./wasm": "./mecab-binding.wasm32-wasi.wasm"
+  },
+  "files": [
+    "mecab-binding.wasm32-wasi.wasm",
+    "mecab-binding.wasi.cjs",
+    "mecab-binding.wasi-browser.js",
+    "wasi-worker.mjs",
+    "wasi-worker-browser.mjs"
+  ],
+  "description": "MeCab Japanese morphological analyzer binding for Node.js via napi-rs",
+  "keywords": [
+    "mecab",
+    "japanese",
+    "morphological-analysis",
+    "nlp",
+    "napi-rs"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "browser": "mecab-binding.wasi-browser.js",
+  "dependencies": {
+    "@napi-rs/wasm-runtime": "^1.1.1"
+  }
+}

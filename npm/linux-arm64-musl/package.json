@@ -1,0 +1,29 @@
+{
+  "name": "mecab-binding-linux-arm64-musl",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "mecab-binding.linux-arm64-musl.node",
+  "files": [
+    "mecab-binding.linux-arm64-musl.node"
+  ],
+  "description": "MeCab Japanese morphological analyzer binding for Node.js via napi-rs",
+  "keywords": [
+    "mecab",
+    "japanese",
+    "morphological-analysis",
+    "nlp",
+    "napi-rs"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "musl"
+  ]
+}

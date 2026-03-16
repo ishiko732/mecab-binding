@@ -17,9 +17,6 @@
       "types": "./ipadic.data.d.ts",
       "default": "./dist/ipadic.data"
     },
-    "./mecab.wasm": {
-      "default": "./dist/mecab-binding.wasm32-wasi.wasm"
-    },
     "./dynamic-wasi": {
       "browser": "./dist/dynamic-wasi-browser.js",
       "types": "./dist/dynamic-wasi.d.ts",

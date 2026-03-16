@@ -15,7 +15,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "paths": {
+      "mecab-binding-wasm32-wasi/wasm": ["../../dist/mecab-binding.wasm32-wasi.wasm"],
+      "mecab-binding-wasm32-wasi/wasi-worker": ["../../dist/wasi-worker-browser.mjs"]
+    }
   },
   "include": ["src"]
 }
