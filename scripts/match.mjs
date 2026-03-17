@@ -9,7 +9,7 @@
  *   node scripts/match.mjs "食べています" --rules n4_teiru,te_form
  *
  * Requires native build: pnpm build
- * Requires compiled grammar: node scripts/compile-grammar.mjs && node scripts/compile-dict.mjs
+ * Requires compiled grammar: node scripts/compile-grammar.mjs
  */
 
 import { createRequire } from 'node:module'

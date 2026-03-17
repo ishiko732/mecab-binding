@@ -31,22 +31,29 @@ fn token_matches(node: &MecabNode, pred: &TokenPredicate) -> bool {
   }
 
   // Check surface form
-  if let Some(ref s) = pred.surface {
-    if node.surface != *s {
+  if let Some(ref m) = pred.surface {
+    if !m.matches(&node.surface) {
       return false;
     }
   }
 
   // Check base form (原形)
-  if let Some(ref b) = pred.base_form {
-    if parts.len() <= FEATURE_BASE_FORM || parts[FEATURE_BASE_FORM] != b.as_str() {
+  if let Some(ref m) = pred.base_form {
+    if parts.len() <= FEATURE_BASE_FORM || !m.matches(parts[FEATURE_BASE_FORM]) {
       return false;
     }
   }
 
   // Check conjugation form (活用形)
-  if let Some(ref cf) = pred.conjugation_form {
-    if parts.len() <= FEATURE_CONJUGATION_FORM || parts[FEATURE_CONJUGATION_FORM] != cf.as_str() {
+  if let Some(ref m) = pred.conjugation_form {
+    if parts.len() <= FEATURE_CONJUGATION_FORM || !m.matches(parts[FEATURE_CONJUGATION_FORM]) {
+      return false;
+    }
+  }
+
+  // Check conjugation type (活用型)
+  if let Some(ref m) = pred.conjugation_type {
+    if parts.len() <= FEATURE_CONJUGATION_TYPE || !m.matches(parts[FEATURE_CONJUGATION_TYPE]) {
       return false;
     }
   }
@@ -638,5 +645,57 @@ mod tests {
     ];
     let matches = find_all_matches(&grammar, &nodes);
     assert!(matches.len() >= 2);
+  }
+
+  #[test]
+  fn test_suffix_base_form_match() {
+    // ~"上がる" should match any verb whose base form ends with 上がる
+    let grammar = parse_grammar(r#"agaru = 動詞@~"上がる" ;"#).unwrap();
+    let nodes = vec![
+      make_node(
+        "盛り上がっ",
+        "動詞,自立,*,*,五段・ラ行,連用タ接続,盛り上がる,モリアガッ,モリアガッ",
+      ),
+      make_node("た", "助動詞,*,*,*,特殊・タ,基本形,た,タ,タ"),
+    ];
+    let matches = find_matches(&grammar, "agaru", &nodes);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].start, 0);
+  }
+
+  #[test]
+  fn test_suffix_base_form_no_match() {
+    let grammar = parse_grammar(r#"agaru = 動詞@~"上がる" ;"#).unwrap();
+    let nodes = vec![make_node(
+      "食べ",
+      "動詞,自立,*,*,一段,連用形,食べる,タベ,タベ",
+    )];
+    let matches = find_matches(&grammar, "agaru", &nodes);
+    assert!(matches.is_empty());
+  }
+
+  #[test]
+  fn test_regex_base_form_match() {
+    // /す[るれ]/ should match する and すれ
+    let grammar = parse_grammar(r#"su = 動詞@/す[るれ]/ ;"#).unwrap();
+    let nodes = vec![
+      make_node("し", "動詞,自立,*,*,サ変・スル,連用形,する,シ,シ"),
+      make_node("すれ", "動詞,自立,*,*,サ変・スル,仮定形,すれ,スレ,スレ"),
+    ];
+    // "する" matches /す[るれ]/ and "すれ" matches /す[るれ]/
+    let matches = find_matches(&grammar, "su", &nodes);
+    assert_eq!(matches.len(), 2);
+  }
+
+  #[test]
+  fn test_suffix_surface_match() {
+    let grammar = parse_grammar(r#"rule = ~"ない" ;"#).unwrap();
+    let nodes = vec![
+      make_node("少ない", "形容詞,自立,*,*,形容詞・アウオ段,基本形,少ない,スクナイ,スクナイ"),
+      make_node("多い", "形容詞,自立,*,*,形容詞・アウオ段,基本形,多い,オオイ,オーイ"),
+    ];
+    let matches = find_matches(&grammar, "rule", &nodes);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].start, 0);
   }
 }

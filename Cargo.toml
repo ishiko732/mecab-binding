@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 napi = { version = "3.0.0", features = ["napi6"] }
 napi-derive = "3.0.0"
 flate2 = "1"
+regex = "1"
 
 [build-dependencies]
 napi-build = "2"

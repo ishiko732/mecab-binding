@@ -172,7 +172,7 @@ describe('GrammarMatcher', () => {
 	})
 
 	test('fromGz handles grammars.data file if exists', () => {
-		const gzPath = resolve(__dirname, '..', 'sources', 'grammars.data')
+		const gzPath = resolve(__dirname, '..', 'dist', 'grammars.data')
 		try {
 			const data = readFileSync(gzPath)
 			const gm = GrammarMatcher.fromGz(data)

@@ -130,6 +130,11 @@ const examplesStmt = db.prepare(
   `SELECT sentence FROM examples WHERE grammar_id = ? AND lang = 'ja' ORDER BY sort_order`,
 )
 
+const excludedSet = new Set(
+  db.prepare('SELECT grammar_id, sentence FROM excluded_examples').all()
+    .map((e) => `${e.grammar_id}:${e.sentence.trim()}`),
+)
+
 // ── Run tests ─────────────────────────────────────────────────────────────────
 
 let total = 0
@@ -141,7 +146,9 @@ const PASS = '\x1b[32m✓\x1b[0m'
 const FAIL = '\x1b[31m✗\x1b[0m'
 
 for (const g of rulesToTest) {
-  const examples = examplesStmt.all(g.id).map((e) => e.sentence.trim()).filter(Boolean)
+  const examples = examplesStmt.all(g.id).map((e) => e.sentence.trim()).filter(
+    (s) => s && !excludedSet.has(`${g.id}:${s}`),
+  )
 
   if (examples.length === 0) {
     skipped++

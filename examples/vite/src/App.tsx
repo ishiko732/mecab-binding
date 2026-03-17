@@ -6,29 +6,6 @@ import { useTagger } from './useTagger'
 const DEFAULT_GRAMMAR = `// 譲歩
 [N5 N4, "いくら〜ても：どんなに〜しても"]
 ikura_temo = "いくら" _* 助詞.接続助詞"で" 助詞.係助詞"も" ;
-
-[N4, "〜ても：仮定の逆接条件"]
-temo = 動詞 助詞.接続助詞"て" 助詞.係助詞"も" ;
-
-// て形
-[N5, "て形：動作の接続"]
-te_form = 動詞 助詞.接続助詞"て" ;
-
-// 原因・理由
-[N5, "〜から：原因・理由を表す"]
-kara_reason = (動詞 | 助動詞) 助詞.接続助詞"から" ;
-
-// 複合名詞
-[N5, "複合名詞：名詞の連続"]
-compound_noun = 名詞 名詞+ ;
-
-// 条件
-[N4, "〜ば：仮定条件"]
-ba_conditional = 動詞 助詞.接続助詞"ば" ;
-
-// 希望
-[N5, "〜たい：話者の希望を表す"]
-tai = 動詞 助動詞@"たい" ;
 `
 
 const LEVEL_COLORS: Record<string, string> = {

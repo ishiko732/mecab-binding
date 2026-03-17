@@ -6,7 +6,7 @@
  * Usage:
  *   node scripts/compile-grammar.mjs
  *
- * Output: sources/grammars.data
+ * Output: dist/grammars.data
  */
 
 import { createWriteStream, existsSync, statSync } from 'node:fs'
@@ -19,7 +19,7 @@ import Database from 'better-sqlite3'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = resolve(__dirname, '..', 'sources', 'grammars.sqlite')
-const OUTPUT_PATH = resolve(__dirname, '..', 'sources', 'grammars.data')
+const OUTPUT_PATH = resolve(__dirname, '..', 'dist', 'grammars.data')
 
 // ── CSV helpers ───────────────────────────────────────────────────────────
 

@@ -20,6 +20,8 @@ use super::syntax::*;
 enum Token {
   Ident(String),
   StringLit(String),
+  RegexLit(String),
+  Tilde,
   At,
   Dot,
   Pipe,
@@ -27,6 +29,8 @@ enum Token {
   RParen,
   LBracket,
   RBracket,
+  LBrace,
+  RBrace,
   Comma,
   Question,
   Star,
@@ -107,8 +111,28 @@ impl Lexer {
     !ch.is_whitespace()
       && !matches!(
         ch,
-        '.' | '@' | '|' | '(' | ')' | '[' | ']' | ',' | '?' | '*' | '+' | '=' | ';' | '"' | '/'
+        '.' | '@' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '?' | '*' | '+' | '=' | ';' | '"' | '/'
+          | '~'
       )
+  }
+
+  fn read_regex_lit(&mut self) -> Result<String, String> {
+    // Opening '/' already consumed
+    let mut s = String::new();
+    loop {
+      match self.next_char() {
+        Some('/') => return Ok(s),
+        Some('\\') => match self.next_char() {
+          Some(c) => {
+            s.push('\\');
+            s.push(c);
+          }
+          None => return Err("Unterminated escape in regex".into()),
+        },
+        Some(c) => s.push(c),
+        None => return Err("Unterminated regex literal".into()),
+      }
+    }
   }
 
   fn read_ident(&mut self, first: char) -> String {
@@ -142,12 +166,16 @@ impl Lexer {
         ')' => Token::RParen,
         '[' => Token::LBracket,
         ']' => Token::RBracket,
+        '{' => Token::LBrace,
+        '}' => Token::RBrace,
         ',' => Token::Comma,
         '?' => Token::Question,
         '*' => Token::Star,
         '+' => Token::Plus,
         '=' => Token::Equals,
         ';' => Token::Semicolon,
+        '~' => Token::Tilde,
+        '/' => Token::RegexLit(self.read_regex_lit()?),
         '"' => Token::StringLit(self.read_string_lit()?),
         '_' => {
           // Check if underscore is followed by ident chars (then it's part of ident)
@@ -199,6 +227,36 @@ impl Parser {
       Some(tok) if tok == expected => Ok(()),
       Some(tok) => Err(format!("Expected {:?}, got {:?}", expected, tok)),
       None => Err(format!("Expected {:?}, got end of input", expected)),
+    }
+  }
+
+  /// Parse a string value that may be exact ("text"), suffix (~"text"), or regex (/pattern/).
+  fn parse_string_value(&mut self) -> Result<StringMatcher, String> {
+    match self.peek() {
+      Some(Token::Tilde) => {
+        self.next(); // consume ~
+        match self.next() {
+          Some(Token::StringLit(s)) => Ok(StringMatcher::Suffix(s.clone())),
+          other => Err(format!("Expected string after '~', got {:?}", other)),
+        }
+      }
+      Some(Token::RegexLit(_)) => {
+        if let Some(Token::RegexLit(s)) = self.next() {
+          let re = regex::Regex::new(&s.clone())
+            .map_err(|e| format!("Invalid regex '{}': {}", s, e))?;
+          Ok(StringMatcher::Regex(re))
+        } else {
+          unreachable!()
+        }
+      }
+      Some(Token::StringLit(_)) => {
+        if let Some(Token::StringLit(s)) = self.next() {
+          Ok(StringMatcher::Exact(s.clone()))
+        } else {
+          unreachable!()
+        }
+      }
+      other => Err(format!("Expected string value, got {:?}", other)),
     }
   }
 
@@ -347,7 +405,7 @@ impl Parser {
         self.next();
         Ok(PatternExpr::Wildcard)
       }
-      Some(Token::StringLit(_)) | Some(Token::At) => {
+      Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_)) | Some(Token::At) => {
         // Surface-only or base-form-only token matcher
         Ok(PatternExpr::Token(self.parse_token_predicate(None)?))
       }
@@ -374,49 +432,74 @@ impl Parser {
           }
         }
 
-        // Parse optional conjugation form: [活用形]
+        // Parse optional conjugation form: [活用形] or [~"suffix"] or [/regex/]
         let mut conjugation_form = None;
         if self.peek() == Some(&Token::LBracket) {
           self.next(); // consume [
-          match self.next() {
-            Some(Token::Ident(cf)) => {
-              conjugation_form = Some(cf.clone());
+          match self.peek() {
+            Some(Token::Tilde) | Some(Token::RegexLit(_)) => {
+              conjugation_form = Some(self.parse_string_value()?);
+              self.expect(&Token::RBracket)?;
+            }
+            Some(Token::Ident(_)) => {
+              if let Some(Token::Ident(cf)) = self.next() {
+                conjugation_form = Some(StringMatcher::Exact(cf.clone()));
+              }
               self.expect(&Token::RBracket)?;
             }
             other => return Err(format!("Expected conjugation form, got {:?}", other)),
           }
         }
 
+        // Parse optional conjugation type: {活用型} or {~"suffix"} or {/regex/}
+        let mut conjugation_type = None;
+        if self.peek() == Some(&Token::LBrace) {
+          self.next(); // consume {
+          match self.peek() {
+            Some(Token::Tilde) | Some(Token::RegexLit(_)) | Some(Token::StringLit(_)) => {
+              conjugation_type = Some(self.parse_string_value()?);
+              self.expect(&Token::RBrace)?;
+            }
+            Some(Token::Ident(_)) => {
+              if let Some(Token::Ident(ct)) = self.next() {
+                conjugation_type = Some(StringMatcher::Exact(ct.clone()));
+              }
+              self.expect(&Token::RBrace)?;
+            }
+            other => return Err(format!("Expected conjugation type, got {:?}", other)),
+          }
+        }
+
         // Check for surface or base_form constraints.
-        // When conjugation_form is set, the following string literal starts a new
-        // atom in the sequence (e.g. 形容詞[ガル接続] "さ" = two separate tokens).
+        // When conjugation_form or conjugation_type is set, the following string
+        // literal starts a new atom in the sequence
+        // (e.g. 形容詞[ガル接続] "さ" = two separate tokens).
         let mut surface = None;
         let mut base_form = None;
 
-        if conjugation_form.is_none() {
-          if let Some(Token::StringLit(_)) = self.peek() {
-            if let Some(Token::StringLit(s)) = self.next() {
-              surface = Some(s.clone());
-            }
+        if conjugation_form.is_none() && conjugation_type.is_none() {
+          if matches!(
+            self.peek(),
+            Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_))
+          ) {
+            surface = Some(self.parse_string_value()?);
           }
 
           if self.peek() == Some(&Token::At) {
             self.next();
-            match self.next() {
-              Some(Token::StringLit(s)) => base_form = Some(s.clone()),
-              other => return Err(format!("Expected string after '@', got {:?}", other)),
-            }
+            base_form = Some(self.parse_string_value()?);
           }
         }
 
         // If it's a bare identifier with no dots, no surface, no base_form,
-        // no conjugation_form, and looks like it could be a rule reference
+        // no conjugation_form/type, and looks like it could be a rule reference
         // (ASCII letters + underscores), treat it as a rule ref.
         // Otherwise treat as POS token matcher.
         if pos_parts.len() == 1
           && surface.is_none()
           && base_form.is_none()
           && conjugation_form.is_none()
+          && conjugation_type.is_none()
           && is_rule_name(&pos_parts[0])
         {
           Ok(PatternExpr::RuleRef(pos_parts.pop().unwrap()))
@@ -426,6 +509,7 @@ impl Parser {
             surface,
             base_form,
             conjugation_form,
+            conjugation_type,
           }))
         }
       }
@@ -438,18 +522,16 @@ impl Parser {
     let mut surface = None;
     let mut base_form = None;
 
-    if let Some(Token::StringLit(_)) = self.peek() {
-      if let Some(Token::StringLit(s)) = self.next() {
-        surface = Some(s.clone());
-      }
+    if matches!(
+      self.peek(),
+      Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_))
+    ) {
+      surface = Some(self.parse_string_value()?);
     }
 
     if self.peek() == Some(&Token::At) {
       self.next();
-      match self.next() {
-        Some(Token::StringLit(s)) => base_form = Some(s.clone()),
-        other => return Err(format!("Expected string after '@', got {:?}", other)),
-      }
+      base_form = Some(self.parse_string_value()?);
     }
 
     Ok(TokenPredicate {
@@ -457,6 +539,7 @@ impl Parser {
       surface,
       base_form,
       conjugation_form: None,
+      conjugation_type: None,
     })
   }
 }
@@ -720,7 +803,7 @@ mod tests {
     match &grammar.rules[0].pattern {
       PatternExpr::Token(pred) => {
         assert_eq!(pred.pos, vec!["動詞"]);
-        assert_eq!(pred.base_form.as_deref(), Some("する"));
+        assert!(matches!(&pred.base_form, Some(StringMatcher::Exact(s)) if s == "する"));
       }
       _ => panic!("Expected Token"),
     }
@@ -732,7 +815,7 @@ mod tests {
     match &grammar.rules[0].pattern {
       PatternExpr::Token(pred) => {
         assert!(pred.pos.is_empty());
-        assert_eq!(pred.surface.as_deref(), Some("いくら"));
+        assert!(matches!(&pred.surface, Some(StringMatcher::Exact(s)) if s == "いくら"));
       }
       _ => panic!("Expected Token"),
     }
@@ -821,5 +904,64 @@ mod tests {
     let grammar = parse_csv_grammar(csv).unwrap();
     let meta = grammar.rules[0].metadata.as_ref().unwrap();
     assert_eq!(meta.levels, vec!["N5", "N4", "N3"]);
+  }
+
+  #[test]
+  fn test_suffix_surface() {
+    let grammar = parse_grammar(r#"rule = 動詞~"る" ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert_eq!(pred.pos, vec!["動詞"]);
+        assert!(matches!(&pred.surface, Some(StringMatcher::Suffix(s)) if s == "る"));
+      }
+      _ => panic!("Expected Token"),
+    }
+  }
+
+  #[test]
+  fn test_suffix_base_form() {
+    let grammar = parse_grammar(r#"rule = 動詞@~"上がる" ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert_eq!(pred.pos, vec!["動詞"]);
+        assert!(matches!(&pred.base_form, Some(StringMatcher::Suffix(s)) if s == "上がる"));
+      }
+      _ => panic!("Expected Token"),
+    }
+  }
+
+  #[test]
+  fn test_regex_base_form() {
+    let grammar = parse_grammar(r#"rule = 動詞@/す[るれ]/ ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert_eq!(pred.pos, vec!["動詞"]);
+        assert!(matches!(&pred.base_form, Some(StringMatcher::Regex(_))));
+      }
+      _ => panic!("Expected Token"),
+    }
+  }
+
+  #[test]
+  fn test_suffix_conjugation_form() {
+    let grammar = parse_grammar(r#"rule = 動詞[~"接続"] ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert!(matches!(&pred.conjugation_form, Some(StringMatcher::Suffix(s)) if s == "接続"));
+      }
+      _ => panic!("Expected Token"),
+    }
+  }
+
+  #[test]
+  fn test_regex_surface() {
+    let grammar = parse_grammar(r#"rule = /^食べ/ ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert!(pred.pos.is_empty());
+        assert!(matches!(&pred.surface, Some(StringMatcher::Regex(_))));
+      }
+      _ => panic!("Expected Token"),
+    }
   }
 }

@@ -69,6 +69,14 @@ function initDB() {
       lang TEXT NOT NULL DEFAULT 'ja',
       sort_order INTEGER DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS excluded_examples (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      grammar_id INTEGER NOT NULL REFERENCES grammars(id),
+      sentence TEXT NOT NULL,
+      reason TEXT,
+      UNIQUE(grammar_id, sentence)
+    );
   `);
 
   // Migrate: add updated_at if missing
@@ -147,14 +155,23 @@ function upsertGrammar(db, { ruleName, levels, name, description, connection, pa
     grammarId = result.lastInsertRowid;
   }
 
-  // Replace examples
+  // Replace examples (respecting excluded_examples)
   if (examples && examples.length > 0) {
+    const excluded = new Set(
+      db.prepare("SELECT sentence FROM excluded_examples WHERE grammar_id = ?")
+        .all(grammarId)
+        .map((r) => r.sentence),
+    );
+
     db.prepare("DELETE FROM examples WHERE grammar_id = ?").run(grammarId);
     const insertExample = db.prepare(
       "INSERT INTO examples (grammar_id, sentence, lang, sort_order) VALUES (?, ?, ?, ?)",
     );
     for (let i = 0; i < examples.length; i++) {
       const ex = examples[i];
+      const sentence = typeof ex === "string" ? ex : ex.sentence;
+      if (excluded.has(sentence)) continue;
+
       if (typeof ex === "string") {
         // Simple string example (nihongokyoshi-net style)
         insertExample.run(grammarId, ex, "ja", i);

@@ -202,4 +202,4 @@ dist/
 sources/grammars.sqlite
 sources/grammars.sqlite-wal
 sources/grammars.sqlite-shm
-sources/grammars.data
+sources/*.bak

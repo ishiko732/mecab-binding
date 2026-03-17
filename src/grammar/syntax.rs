@@ -2,18 +2,43 @@
 ///
 /// The grammar operates on a stream of MecabNode tokens. Each terminal
 /// matches a single token by its POS hierarchy, surface form, or base form.
+use regex::Regex;
+
+/// String matching strategy for token fields.
+#[derive(Debug, Clone)]
+pub enum StringMatcher {
+  /// Exact equality: `"text"` or `@"text"` or `[form]`
+  Exact(String),
+  /// Suffix match: `~"suffix"` or `@~"suffix"` or `[~"suffix"]`
+  Suffix(String),
+  /// Regex match: `/pattern/` or `@/pattern/` or `[/pattern/]`
+  Regex(Regex),
+}
+
+impl StringMatcher {
+  /// Test whether the given string matches this matcher.
+  pub fn matches(&self, value: &str) -> bool {
+    match self {
+      StringMatcher::Exact(s) => value == s,
+      StringMatcher::Suffix(s) => value.ends_with(s.as_str()),
+      StringMatcher::Regex(r) => r.is_match(value),
+    }
+  }
+}
 
 /// Constraint on a single MeCab token.
 #[derive(Debug, Clone)]
 pub struct TokenPredicate {
   /// POS hierarchy: e.g. ["動詞"] or ["助詞", "接続助詞"]
   pub pos: Vec<String>,
-  /// Surface form constraint (exact match)
-  pub surface: Option<String>,
+  /// Surface form constraint
+  pub surface: Option<StringMatcher>,
   /// Base form constraint (原形, feature index 6)
-  pub base_form: Option<String>,
+  pub base_form: Option<StringMatcher>,
   /// Conjugation form constraint (活用形, feature index 5)
-  pub conjugation_form: Option<String>,
+  pub conjugation_form: Option<StringMatcher>,
+  /// Conjugation type constraint (活用型, feature index 4)
+  pub conjugation_type: Option<StringMatcher>,
 }
 
 /// A node in the pattern AST.
