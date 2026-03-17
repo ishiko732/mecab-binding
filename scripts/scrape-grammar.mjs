@@ -131,10 +131,11 @@ function upsertGrammar(db, { ruleName, levels, name, description, connection, pa
 
   let grammarId;
   if (existing) {
+    // Do not overwrite pattern on update — pattern is manually curated
     db.prepare(
-      `UPDATE grammars SET levels = ?, name = ?, description = ?, connection = ?, pattern = ?, source = ?, source_url = ?, updated_at = datetime('now')
+      `UPDATE grammars SET levels = ?, name = ?, description = ?, connection = ?, source = ?, source_url = ?, updated_at = datetime('now')
        WHERE rule_name = ?`,
-    ).run(levels, name, description, connection, pattern, source, sourceUrl, ruleName);
+    ).run(levels, name, description, connection, source, sourceUrl, ruleName);
     grammarId = existing.id;
   } else {
     const result = db
@@ -214,21 +215,37 @@ function parseMainichiPage(html, url) {
     levels = levelMatch ? levelMatch[1] : "";
   }
 
-  // Extract description (解説) and connection (接続) from h3 sections
+  // Extract description (解説), connection (接続), and meaning (意味) from h3 sections
   let description = "";
   let connection = "";
+  let meaning = "";
   const sectionHeadings = page.querySelectorAll("h2, h3, h4");
   for (const el of sectionHeadings) {
     const heading = el.text.trim();
-    const next = el.nextElementSibling;
-    if (!next || ["H2", "H3", "H4"].includes(next.tagName)) continue;
-    const content = next.text.trim();
+
+    // Collect all text from sibling elements until the next heading
+    const parts = [];
+    let sibling = el.nextElementSibling;
+    while (sibling && !["H2", "H3", "H4"].includes(sibling.tagName)) {
+      const t = sibling.text.trim();
+      if (t) parts.push(t);
+      sibling = sibling.nextElementSibling;
+    }
+    if (parts.length === 0) continue;
+    const content = parts.join("\n");
 
     if (heading.includes("解説") && !description) {
       description = content;
     } else if ((heading.includes("接続") || heading.includes("つなぎ方")) && !connection) {
-      connection = content.slice(0, 200);
+      connection = content;
+    } else if (heading.includes("意味") && !meaning) {
+      meaning = content;
     }
+  }
+
+  // Append meaning to description if available
+  if (meaning) {
+    description = description ? `${description}\n\n【意味】\n${meaning}` : meaning;
   }
 
   // Extract examples from 例文 section
