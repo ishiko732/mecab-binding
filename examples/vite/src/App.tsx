@@ -84,6 +84,21 @@ function App() {
 
 	const error = taggerError || parseError
 
+	// Filter out matches whose span is fully contained within a larger match's span.
+	// This suppresses redundant sub-pattern cards (e.g. te_form inside n4_teiru).
+	const displayedMatches = useMemo(() => {
+		return grammarMatches.filter((m) => {
+			const mLen = m.end - m.start
+			return !grammarMatches.some(
+				(other) =>
+					other !== m &&
+					other.start <= m.start &&
+					other.end >= m.end &&
+					other.end - other.start > mLen,
+			)
+		})
+	}, [grammarMatches])
+
 	// Build a map: node index -> { matches, isFixed }
 	const nodeMatchMap = useMemo(() => {
 		const map = new Map<number, { matches: GrammarMatch[]; isFixed: boolean }>()
@@ -201,7 +216,7 @@ function App() {
 				<div style={{ marginBottom: '1rem' }}>
 					<h3 style={{ fontSize: '0.9rem', color: '#555', marginBottom: '0.5rem' }}>Grammar Patterns Found</h3>
 					<div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-						{grammarMatches.map((m, idx) => {
+						{displayedMatches.map((m, idx) => {
 							const levelColor = m.levels[0] ? LEVEL_COLORS[m.levels[0]] || '#666' : '#666'
 							return (
 								<div
