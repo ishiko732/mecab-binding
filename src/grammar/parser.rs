@@ -12,191 +12,8 @@
 ///   pos_path    = IDENT ("." IDENT)* ;
 ///   string_lit  = '"' ... '"' ;
 ///   base_form   = "@" string_lit ;
+use super::lexer::{is_rule_name, Lexer, Token};
 use super::syntax::*;
-
-// ── Lexer ──────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq)]
-enum Token {
-  Ident(String),
-  StringLit(String),
-  RegexLit(String),
-  Tilde,
-  At,
-  Dot,
-  Pipe,
-  LParen,
-  RParen,
-  LBracket,
-  RBracket,
-  LBrace,
-  RBrace,
-  Comma,
-  Question,
-  Star,
-  Plus,
-  Underscore,
-  Equals,
-  Semicolon,
-}
-
-struct Lexer {
-  chars: Vec<char>,
-  pos: usize,
-}
-
-impl Lexer {
-  fn new(input: &str) -> Self {
-    Lexer {
-      chars: input.chars().collect(),
-      pos: 0,
-    }
-  }
-
-  fn peek_char(&self) -> Option<char> {
-    self.chars.get(self.pos).copied()
-  }
-
-  fn next_char(&mut self) -> Option<char> {
-    let ch = self.chars.get(self.pos).copied();
-    if ch.is_some() {
-      self.pos += 1;
-    }
-    ch
-  }
-
-  fn skip_whitespace_and_comments(&mut self) {
-    loop {
-      // Skip whitespace
-      while let Some(ch) = self.peek_char() {
-        if ch.is_whitespace() {
-          self.next_char();
-        } else {
-          break;
-        }
-      }
-      // Skip line comments
-      if self.pos + 1 < self.chars.len()
-        && self.chars[self.pos] == '/'
-        && self.chars[self.pos + 1] == '/'
-      {
-        while let Some(ch) = self.next_char() {
-          if ch == '\n' {
-            break;
-          }
-        }
-      } else {
-        break;
-      }
-    }
-  }
-
-  fn read_string_lit(&mut self) -> Result<String, String> {
-    // Opening quote already consumed
-    let mut s = String::new();
-    loop {
-      match self.next_char() {
-        Some('"') => return Ok(s),
-        Some('\\') => match self.next_char() {
-          Some(c) => s.push(c),
-          None => return Err("Unterminated escape in string".into()),
-        },
-        Some(c) => s.push(c),
-        None => return Err("Unterminated string literal".into()),
-      }
-    }
-  }
-
-  fn is_ident_char(ch: char) -> bool {
-    !ch.is_whitespace()
-      && !matches!(
-        ch,
-        '.' | '@' | '|' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | '?' | '*' | '+' | '=' | ';' | '"' | '/'
-          | '~'
-      )
-  }
-
-  fn read_regex_lit(&mut self) -> Result<String, String> {
-    // Opening '/' already consumed
-    let mut s = String::new();
-    loop {
-      match self.next_char() {
-        Some('/') => return Ok(s),
-        Some('\\') => match self.next_char() {
-          Some(c) => {
-            s.push('\\');
-            s.push(c);
-          }
-          None => return Err("Unterminated escape in regex".into()),
-        },
-        Some(c) => s.push(c),
-        None => return Err("Unterminated regex literal".into()),
-      }
-    }
-  }
-
-  fn read_ident(&mut self, first: char) -> String {
-    let mut s = String::new();
-    s.push(first);
-    while let Some(ch) = self.peek_char() {
-      if Self::is_ident_char(ch) {
-        s.push(ch);
-        self.next_char();
-      } else {
-        break;
-      }
-    }
-    s
-  }
-
-  fn tokenize(&mut self) -> Result<Vec<Token>, String> {
-    let mut tokens = Vec::new();
-    loop {
-      self.skip_whitespace_and_comments();
-      let ch = match self.peek_char() {
-        Some(c) => c,
-        None => break,
-      };
-      self.next_char();
-      let tok = match ch {
-        '@' => Token::At,
-        '.' => Token::Dot,
-        '|' => Token::Pipe,
-        '(' => Token::LParen,
-        ')' => Token::RParen,
-        '[' => Token::LBracket,
-        ']' => Token::RBracket,
-        '{' => Token::LBrace,
-        '}' => Token::RBrace,
-        ',' => Token::Comma,
-        '?' => Token::Question,
-        '*' => Token::Star,
-        '+' => Token::Plus,
-        '=' => Token::Equals,
-        ';' => Token::Semicolon,
-        '~' => Token::Tilde,
-        '/' => Token::RegexLit(self.read_regex_lit()?),
-        '"' => Token::StringLit(self.read_string_lit()?),
-        '_' => {
-          // Check if underscore is followed by ident chars (then it's part of ident)
-          if let Some(next) = self.peek_char() {
-            if Self::is_ident_char(next) && next != '_' {
-              Token::Ident(self.read_ident('_'))
-            } else {
-              Token::Underscore
-            }
-          } else {
-            Token::Underscore
-          }
-        }
-        c if Self::is_ident_char(c) => Token::Ident(self.read_ident(c)),
-        c => return Err(format!("Unexpected character: '{}'", c)),
-      };
-      tokens.push(tok);
-    }
-    Ok(tokens)
-  }
-}
 
 // ── Parser ─────────────────────────────────────────────────────────────────
 
@@ -242,7 +59,7 @@ impl Parser {
       }
       Some(Token::RegexLit(_)) => {
         if let Some(Token::RegexLit(s)) = self.next() {
-          let re = regex::Regex::new(&s.clone())
+          let re = regex_lite::Regex::new(&s.clone())
             .map_err(|e| format!("Invalid regex '{}': {}", s, e))?;
           Ok(StringMatcher::Regex(re))
         } else {
@@ -286,10 +103,12 @@ impl Parser {
     let pattern = self.parse_expr()?;
     self.expect(&Token::Semicolon)?;
 
+    let uses_captures = pattern_uses_captures(&pattern);
     Ok(Rule {
       name,
       pattern,
       metadata,
+      uses_captures,
     })
   }
 
@@ -403,24 +222,72 @@ impl Parser {
       }
       Some(Token::Underscore) => {
         self.next();
+        // Check for _@=$N (wildcard with back-reference)
+        if self.peek() == Some(&Token::At)
+          && self.pos + 1 < self.tokens.len()
+          && self.tokens[self.pos + 1] == Token::Equals
+        {
+          self.next(); // consume @
+          self.next(); // consume =
+          match self.next() {
+            Some(Token::CaptureSlot(n)) => {
+              let n = *n;
+              return Ok(PatternExpr::Token(Box::new(TokenPredicate {
+                pos: vec![],
+                surface: None,
+                base_form: None,
+                conjugation_form: None,
+                conjugation_type: None,
+                capture: None,
+                base_form_ref: Some(n),
+              })));
+            }
+            other => return Err(format!("Expected capture slot after '_@=', got {:?}", other)),
+          }
+        }
         Ok(PatternExpr::Wildcard)
       }
       Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_)) | Some(Token::At) => {
-        // Surface-only or base-form-only token matcher
-        Ok(PatternExpr::Token(self.parse_token_predicate(None)?))
+        // Surface-only or base-form-only token matcher, or @=$N back-reference
+        // Check for @=$N (base_form back-reference on bare token)
+        if self.peek() == Some(&Token::At) {
+          // Peek further to see if it's @= (back-ref) or @"..." (base_form)
+          if self.pos + 1 < self.tokens.len() && self.tokens[self.pos + 1] == Token::Equals {
+            // @=$N on bare token (no POS)
+            self.next(); // consume @
+            self.next(); // consume =
+            match self.next() {
+              Some(Token::CaptureSlot(n)) => {
+                let n = *n;
+                return Ok(PatternExpr::Token(Box::new(TokenPredicate {
+                  pos: vec![],
+                  surface: None,
+                  base_form: None,
+                  conjugation_form: None,
+                  conjugation_type: None,
+                  capture: None,
+                  base_form_ref: Some(n),
+                })));
+              }
+              other => return Err(format!("Expected capture slot after '@=', got {:?}", other)),
+            }
+          }
+        }
+        Ok(PatternExpr::Token(Box::new(self.parse_token_predicate(None)?)))
       }
       Some(Token::Ident(_)) => {
-        // Could be: POS path (token matcher), or rule reference.
-        // Peek ahead to decide: if followed by "=", it's a new rule (shouldn't be here).
-        // If followed by dot, string, or @, it's a token matcher.
-        // If followed by quantifier, pipe, rparen, semicolon, or another atom-start, it's ambiguous.
-        // Strategy: parse as POS path first, then check for string/@.
-        // If the ident looks like a rule reference (ASCII-only, appears as a rule name),
-        // we'll resolve that at match time via RuleRef.
+        // Could be: POS path (token matcher), rule reference, or _$N wildcard capture.
         let ident = match self.next() {
           Some(Token::Ident(s)) => s.clone(),
           _ => unreachable!(),
         };
+
+        // Handle _$N wildcard capture sentinel (produced by lexer)
+        if let Some(suffix) = ident.strip_prefix("_$") {
+          if let Ok(n) = suffix.parse::<u8>() {
+            return Ok(PatternExpr::WildcardCapture(n));
+          }
+        }
 
         // Check if this is a POS path (may have dots)
         let mut pos_parts = vec![ident.clone()];
@@ -430,6 +297,13 @@ impl Parser {
             Some(Token::Ident(s)) => pos_parts.push(s.clone()),
             other => return Err(format!("Expected identifier after '.', got {:?}", other)),
           }
+        }
+
+        // Parse optional capture slot: POS$N
+        let mut capture = None;
+        if let Some(Token::CaptureSlot(n)) = self.peek() {
+          capture = Some(*n);
+          self.next();
         }
 
         // Parse optional conjugation form: [活用形] or [~"suffix"] or [/regex/]
@@ -478,42 +352,58 @@ impl Parser {
         // (e.g. 形容詞[連用テ接続]@"ない" = single token with conjugation + base match).
         let mut surface = None;
         let mut base_form = None;
+        let mut base_form_ref = None;
 
-        if conjugation_form.is_none() && conjugation_type.is_none() {
-          if matches!(
+        if conjugation_form.is_none()
+          && conjugation_type.is_none()
+          && matches!(
             self.peek(),
             Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_))
-          ) {
-            surface = Some(self.parse_string_value()?);
+          )
+        {
+          surface = Some(self.parse_string_value()?);
+        }
+
+        // Base form: @"..." (static) or @=$N (back-reference)
+        if self.peek() == Some(&Token::At) {
+          self.next();
+          if self.peek() == Some(&Token::Equals) {
+            // @=$N back-reference
+            self.next(); // consume =
+            match self.next() {
+              Some(Token::CaptureSlot(n)) => {
+                base_form_ref = Some(*n);
+              }
+              other => return Err(format!("Expected capture slot after '@=', got {:?}", other)),
+            }
+          } else {
+            base_form = Some(self.parse_string_value()?);
           }
         }
 
-        // Base form (@"...") is always allowed, even with conjugation constraints
-        if self.peek() == Some(&Token::At) {
-          self.next();
-          base_form = Some(self.parse_string_value()?);
-        }
-
         // If it's a bare identifier with no dots, no surface, no base_form,
-        // no conjugation_form/type, and looks like it could be a rule reference
-        // (ASCII letters + underscores), treat it as a rule ref.
-        // Otherwise treat as POS token matcher.
+        // no conjugation_form/type, no capture, no base_form_ref, and looks like
+        // a rule reference (ASCII letters + underscores), treat it as a rule ref.
         if pos_parts.len() == 1
           && surface.is_none()
           && base_form.is_none()
           && conjugation_form.is_none()
           && conjugation_type.is_none()
+          && capture.is_none()
+          && base_form_ref.is_none()
           && is_rule_name(&pos_parts[0])
         {
           Ok(PatternExpr::RuleRef(pos_parts.pop().unwrap()))
         } else {
-          Ok(PatternExpr::Token(TokenPredicate {
+          Ok(PatternExpr::Token(Box::new(TokenPredicate {
             pos: pos_parts,
             surface,
             base_form,
             conjugation_form,
             conjugation_type,
-          }))
+            capture,
+            base_form_ref,
+          })))
         }
       }
       other => Err(format!("Unexpected token: {:?}", other)),
@@ -543,14 +433,10 @@ impl Parser {
       base_form,
       conjugation_form: None,
       conjugation_type: None,
+      capture: None,
+      base_form_ref: None,
     })
   }
-}
-
-/// Heuristic: rule names are ASCII identifiers (letters, digits, underscores).
-/// POS tags contain Japanese characters.
-fn is_rule_name(s: &str) -> bool {
-  s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Parse a grammar text string into a Grammar AST.
@@ -559,172 +445,6 @@ pub fn parse_grammar(input: &str) -> Result<Grammar, String> {
   let tokens = lexer.tokenize()?;
   let mut parser = Parser::new(tokens);
   parser.parse_grammar()
-}
-
-/// Parse a single CSV field, handling double-quote escaping.
-/// Returns (field_value, rest_of_line).
-fn parse_csv_field(input: &str) -> (String, &str) {
-  let input = input.trim_start();
-  if input.starts_with('"') {
-    // Quoted field: find matching close quote (doubled quotes are escapes)
-    let mut result = String::new();
-    let mut chars = input[1..].chars().peekable();
-    let mut byte_pos = 1; // start after opening quote
-    loop {
-      match chars.next() {
-        Some('"') => {
-          byte_pos += '"'.len_utf8();
-          if chars.peek() == Some(&'"') {
-            // Escaped quote
-            result.push('"');
-            chars.next();
-            byte_pos += '"'.len_utf8();
-          } else {
-            // End of quoted field
-            break;
-          }
-        }
-        Some(c) => {
-          result.push(c);
-          byte_pos += c.len_utf8();
-        }
-        None => break,
-      }
-    }
-    // Skip comma after closing quote
-    let rest = &input[byte_pos..];
-    let rest = if rest.starts_with(',') {
-      &rest[1..]
-    } else {
-      rest
-    };
-    (result, rest)
-  } else {
-    // Unquoted field: read until comma or end
-    match input.find(',') {
-      Some(pos) => (input[..pos].to_string(), &input[pos + 1..]),
-      None => (input.to_string(), ""),
-    }
-  }
-}
-
-/// Parse examples string: "ja:text1;zh:翻译|ja:text2"
-fn parse_examples_str(s: &str) -> Vec<Example> {
-  if s.is_empty() {
-    return Vec::new();
-  }
-  s.split('|')
-    .map(|example_group| {
-      let parts: Vec<&str> = example_group.split(';').collect();
-      let mut sentence = String::new();
-      let mut translations = Vec::new();
-      for part in parts {
-        if let Some(colon_pos) = part.find(':') {
-          let lang = &part[..colon_pos];
-          let text = &part[colon_pos + 1..];
-          if lang == "ja" && sentence.is_empty() {
-            sentence = text.to_string();
-          } else {
-            translations.push((lang.to_string(), text.to_string()));
-          }
-        } else if sentence.is_empty() {
-          sentence = part.to_string();
-        }
-      }
-      Example {
-        sentence,
-        translations,
-      }
-    })
-    .collect()
-}
-
-/// Parse CSV format grammar rules (from grammars.gz).
-///
-/// CSV format (UTF-8, with header):
-/// rule_name,levels,name,description,connection,pattern,examples
-pub fn parse_csv_grammar(csv_text: &str) -> Result<Grammar, String> {
-  let mut rules = Vec::new();
-
-  for (line_num, line) in csv_text.lines().enumerate() {
-    // Skip header and empty lines
-    if line_num == 0 || line.trim().is_empty() {
-      continue;
-    }
-
-    // Parse 7 CSV fields
-    let (rule_name, rest) = parse_csv_field(line);
-    let (levels_str, rest) = parse_csv_field(rest);
-    let (name, rest) = parse_csv_field(rest);
-    let (description, rest) = parse_csv_field(rest);
-    let (connection, rest) = parse_csv_field(rest);
-    let (pattern_str, rest) = parse_csv_field(rest);
-    let (examples_str, _) = parse_csv_field(rest);
-
-    let levels: Vec<String> = if levels_str.is_empty() {
-      Vec::new()
-    } else {
-      levels_str
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect()
-    };
-
-    let desc = if name.is_empty() && description.is_empty() {
-      None
-    } else if description.is_empty() {
-      Some(name.clone())
-    } else {
-      Some(format!("{}：{}", name, description))
-    };
-
-    let examples = parse_examples_str(&examples_str);
-
-    let metadata = Some(RuleMetadata {
-      levels,
-      description: desc,
-      connection: if connection.is_empty() {
-        None
-      } else {
-        Some(connection)
-      },
-      examples,
-    });
-
-    // Parse the EBNF pattern if present, otherwise create a dummy pattern
-    let pattern = if pattern_str.trim().is_empty() {
-      // No pattern: create a rule that never matches (empty sequence)
-      PatternExpr::Sequence(Vec::new())
-    } else {
-      // Parse the EBNF pattern expression
-      let pattern_grammar = format!("{} = {} ;", rule_name, pattern_str);
-      match parse_grammar(&pattern_grammar) {
-        Ok(g) => {
-          if let Some(r) = g.rules.into_iter().next() {
-            r.pattern
-          } else {
-            PatternExpr::Sequence(Vec::new())
-          }
-        }
-        Err(e) => {
-          // Log parse error but continue with other rules
-          eprintln!(
-            "Warning: failed to parse pattern for rule '{}': {}",
-            rule_name, e
-          );
-          PatternExpr::Sequence(Vec::new())
-        }
-      }
-    };
-
-    rules.push(Rule {
-      name: rule_name,
-      pattern,
-      metadata,
-    });
-  }
-
-  Ok(Grammar { rules })
 }
 
 #[cfg(test)]
@@ -859,54 +579,6 @@ mod tests {
     assert_eq!(m0.levels, vec!["N5"]);
     let m1 = grammar.rules[1].metadata.as_ref().unwrap();
     assert_eq!(m1.levels, vec!["N3", "N2"]);
-  }
-
-  #[test]
-  fn test_parse_csv_grammar_basic() {
-    let csv = "rule_name,levels,name,description,connection,pattern,examples\n\
-                   te_form,N5,て形,動作の接続,動詞て形,\"動詞 助詞.接続助詞\"\"て\"\"\",ja:食べて寝る|ja:走って帰る\n";
-    let grammar = parse_csv_grammar(csv).unwrap();
-    assert_eq!(grammar.rules.len(), 1);
-    assert_eq!(grammar.rules[0].name, "te_form");
-    let meta = grammar.rules[0].metadata.as_ref().unwrap();
-    assert_eq!(meta.levels, vec!["N5"]);
-    assert_eq!(meta.connection.as_deref(), Some("動詞て形"));
-    assert_eq!(meta.examples.len(), 2);
-    assert_eq!(meta.examples[0].sentence, "食べて寝る");
-    assert_eq!(meta.examples[1].sentence, "走って帰る");
-  }
-
-  #[test]
-  fn test_parse_csv_grammar_with_translations() {
-    let csv = "rule_name,levels,name,description,connection,pattern,examples\n\
-                   test,N4,テスト,テスト説明,,\"\",ja:食べる;zh:吃;en:eat\n";
-    let grammar = parse_csv_grammar(csv).unwrap();
-    let meta = grammar.rules[0].metadata.as_ref().unwrap();
-    assert_eq!(meta.examples.len(), 1);
-    assert_eq!(meta.examples[0].sentence, "食べる");
-    assert_eq!(meta.examples[0].translations.len(), 2);
-    assert_eq!(meta.examples[0].translations[0].0, "zh");
-    assert_eq!(meta.examples[0].translations[0].1, "吃");
-    assert_eq!(meta.examples[0].translations[1].0, "en");
-    assert_eq!(meta.examples[0].translations[1].1, "eat");
-  }
-
-  #[test]
-  fn test_parse_csv_grammar_empty_pattern() {
-    let csv = "rule_name,levels,name,description,connection,pattern,examples\n\
-                   no_pattern,N3,テスト,説明,接続,,ja:例文\n";
-    let grammar = parse_csv_grammar(csv).unwrap();
-    assert_eq!(grammar.rules.len(), 1);
-    assert_eq!(grammar.rules[0].name, "no_pattern");
-  }
-
-  #[test]
-  fn test_parse_csv_grammar_multiple_levels() {
-    let csv = "rule_name,levels,name,description,connection,pattern,examples\n\
-                   multi,N5 N4 N3,テスト,説明,,,\n";
-    let grammar = parse_csv_grammar(csv).unwrap();
-    let meta = grammar.rules[0].metadata.as_ref().unwrap();
-    assert_eq!(meta.levels, vec!["N5", "N4", "N3"]);
   }
 
   #[test]

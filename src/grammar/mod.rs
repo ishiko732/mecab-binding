@@ -1,6 +1,9 @@
+mod csv_parser;
+mod lexer;
 mod matcher;
 mod parser;
 mod syntax;
+mod token;
 
 use crate::node::MecabNode;
 use napi::bindgen_prelude::*;
@@ -91,7 +94,7 @@ impl GrammarMatcher {
       .read_to_string(&mut csv_text)
       .map_err(|e| Error::from_reason(format!("Failed to decompress gz data: {}", e)))?;
 
-    let grammar = parser::parse_csv_grammar(&csv_text)
+    let grammar = csv_parser::parse_csv_grammar(&csv_text)
       .map_err(|e| Error::from_reason(format!("CSV grammar parse error: {}", e)))?;
     Ok(GrammarMatcher { grammar })
   }

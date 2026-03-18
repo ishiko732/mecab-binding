@@ -6,60 +6,7 @@ use std::collections::HashMap;
 use crate::node::MecabNode;
 
 use super::syntax::*;
-
-/// MeCab ipadic feature field indices.
-/// Format: 品詞,品詞細分類1,品詞細分類2,品詞細分類3,活用型,活用形,原形,読み,発音
-const FEATURE_CONJUGATION_TYPE: usize = 4; // 活用型
-const FEATURE_CONJUGATION_FORM: usize = 5; // 活用形
-const FEATURE_BASE_FORM: usize = 6; // 原形
-
-/// Parse the comma-separated feature string from MeCab.
-/// Feature format: 品詞,品詞細分類1,品詞細分類2,品詞細分類3,活用型,活用形,原形,読み,発音
-fn parse_feature(feature: &str) -> Vec<&str> {
-  feature.split(',').collect()
-}
-
-/// Check if a single MecabNode matches a TokenPredicate.
-fn token_matches(node: &MecabNode, pred: &TokenPredicate) -> bool {
-  let parts = parse_feature(&node.feature);
-
-  // Check POS hierarchy
-  for (i, expected) in pred.pos.iter().enumerate() {
-    if i >= parts.len() || parts[i] != expected.as_str() {
-      return false;
-    }
-  }
-
-  // Check surface form
-  if let Some(ref m) = pred.surface {
-    if !m.matches(&node.surface) {
-      return false;
-    }
-  }
-
-  // Check base form (原形)
-  if let Some(ref m) = pred.base_form {
-    if parts.len() <= FEATURE_BASE_FORM || !m.matches(parts[FEATURE_BASE_FORM]) {
-      return false;
-    }
-  }
-
-  // Check conjugation form (活用形)
-  if let Some(ref m) = pred.conjugation_form {
-    if parts.len() <= FEATURE_CONJUGATION_FORM || !m.matches(parts[FEATURE_CONJUGATION_FORM]) {
-      return false;
-    }
-  }
-
-  // Check conjugation type (活用型)
-  if let Some(ref m) = pred.conjugation_type {
-    if parts.len() <= FEATURE_CONJUGATION_TYPE || !m.matches(parts[FEATURE_CONJUGATION_TYPE]) {
-      return false;
-    }
-  }
-
-  true
-}
+use super::token::*;
 
 /// Try to match `pattern` starting at `nodes[pos]`.
 /// Returns a sorted Vec of possible end positions (ascending = non-greedy first).
@@ -85,7 +32,7 @@ fn match_at(
       }
     }
 
-    PatternExpr::Wildcard => {
+    PatternExpr::Wildcard | PatternExpr::WildcardCapture(_) => {
       if pos < nodes.len() {
         vec![pos + 1]
       } else {
@@ -210,6 +157,156 @@ fn match_at(
   result
 }
 
+// ── Capture-aware matching (no memoization) ──────────────────────────────
+
+/// Capture-aware match_at. Returns Vec of (end_pos, captures) pairs.
+/// Does NOT use memoization because capture state invalidates cache keys.
+fn match_at_captures(
+  grammar: &Grammar,
+  pattern: &PatternExpr,
+  nodes: &[MecabNode],
+  pos: usize,
+  captures: &CaptureMap,
+) -> Vec<(usize, CaptureMap)> {
+  match pattern {
+    PatternExpr::Token(pred) => {
+      if pos < nodes.len() {
+        if let Some(new_caps) = token_matches_with_captures(&nodes[pos], pred, captures) {
+          vec![(pos + 1, new_caps)]
+        } else {
+          vec![]
+        }
+      } else {
+        vec![]
+      }
+    }
+
+    PatternExpr::Wildcard => {
+      if pos < nodes.len() {
+        vec![(pos + 1, captures.clone())]
+      } else {
+        vec![]
+      }
+    }
+
+    PatternExpr::WildcardCapture(slot) => {
+      if pos < nodes.len() {
+        let mut new_caps = captures.clone();
+        new_caps.insert(*slot, base_form_from_parts(&parse_feature(&nodes[pos].feature)).to_string());
+        vec![(pos + 1, new_caps)]
+      } else {
+        vec![]
+      }
+    }
+
+    PatternExpr::Sequence(items) => {
+      let mut current: Vec<(usize, CaptureMap)> = vec![(pos, captures.clone())];
+      for item in items {
+        let mut next = Vec::new();
+        for (p, caps) in &current {
+          let results = match_at_captures(grammar, item, nodes, *p, caps);
+          for (end, new_caps) in results {
+            // Dedup by (position, captures) — not position alone, because
+            // different capture states may affect subsequent back-references.
+            if !next.iter().any(|(e, c)| *e == end && *c == new_caps) {
+              next.push((end, new_caps));
+            }
+          }
+        }
+        current = next;
+        if current.is_empty() {
+          break;
+        }
+      }
+      current.sort_by_key(|(e, _)| *e);
+      current
+    }
+
+    PatternExpr::Alternative(alts) => {
+      let mut results = Vec::new();
+      for alt in alts {
+        let ends = match_at_captures(grammar, alt, nodes, pos, captures);
+        for (end, caps) in ends {
+          if !results.iter().any(|(e, c)| *e == end && *c == caps) {
+            results.push((end, caps));
+          }
+        }
+      }
+      results.sort_by_key(|(e, _)| *e);
+      results
+    }
+
+    PatternExpr::Optional(inner) => {
+      let mut results = vec![(pos, captures.clone())];
+      let ends = match_at_captures(grammar, inner, nodes, pos, captures);
+      for (end, caps) in ends {
+        if !results.iter().any(|(e, c)| *e == end && *c == caps) {
+          results.push((end, caps));
+        }
+      }
+      results
+    }
+
+    PatternExpr::ZeroOrMore(inner) => {
+      let mut results = vec![(pos, captures.clone())];
+      let mut frontier = vec![(pos, captures.clone())];
+      let mut visited = vec![pos];
+
+      while !frontier.is_empty() {
+        let mut next_frontier = Vec::new();
+        for (p, caps) in &frontier {
+          let ends = match_at_captures(grammar, inner, nodes, *p, caps);
+          for (end, new_caps) in ends {
+            if end > *p && !visited.contains(&end) {
+              visited.push(end);
+              results.push((end, new_caps.clone()));
+              next_frontier.push((end, new_caps));
+            }
+          }
+        }
+        frontier = next_frontier;
+      }
+      results.sort_by_key(|(e, _)| *e);
+      results
+    }
+
+    PatternExpr::OneOrMore(inner) => {
+      let first = match_at_captures(grammar, inner, nodes, pos, captures);
+      let mut results = Vec::new();
+      let mut frontier = first.clone();
+      let mut visited: Vec<usize> = first.iter().map(|(e, _)| *e).collect();
+
+      results.extend(first);
+
+      while !frontier.is_empty() {
+        let mut next_frontier = Vec::new();
+        for (p, caps) in &frontier {
+          let ends = match_at_captures(grammar, inner, nodes, *p, caps);
+          for (end, new_caps) in ends {
+            if end > *p && !visited.contains(&end) {
+              visited.push(end);
+              results.push((end, new_caps.clone()));
+              next_frontier.push((end, new_caps));
+            }
+          }
+        }
+        frontier = next_frontier;
+      }
+      results.sort_by_key(|(e, _)| *e);
+      results
+    }
+
+    PatternExpr::RuleRef(name) => {
+      if let Some(rule) = grammar.find_rule(name) {
+        let p = rule.pattern.clone();
+        match_at_captures(grammar, &p, nodes, pos, captures)
+      } else {
+        vec![]
+      }
+    }
+  }
+}
+
 /// Trace which node indices are matched by fixed (non-wildcard) patterns.
 /// Returns Some(fixed_indices) if the pattern matches at `pos` ending at `end`,
 /// or None if no match is possible.
@@ -230,7 +327,7 @@ fn trace_fixed(
       }
     }
 
-    PatternExpr::Wildcard => {
+    PatternExpr::Wildcard | PatternExpr::WildcardCapture(_) => {
       if pos < nodes.len() && pos + 1 == end {
         Some(vec![]) // Wildcard: NOT fixed
       } else {
@@ -379,6 +476,8 @@ pub fn find_matches(grammar: &Grammar, rule_name: &str, nodes: &[MecabNode]) -> 
   };
 
   let pattern = rule.pattern.clone();
+  // Use grammar-aware check that resolves RuleRef targets transitively
+  let uses_captures = grammar.rule_uses_captures(rule_name);
   let mut matches = Vec::new();
   let mut skip_until = 0;
 
@@ -386,25 +485,56 @@ pub fn find_matches(grammar: &Grammar, rule_name: &str, nodes: &[MecabNode]) -> 
     if start < skip_until {
       continue;
     }
-    let mut memo = HashMap::new();
-    let ends = match_at(grammar, &pattern, nodes, start, &mut memo);
 
-    // Take the longest match (last end position)
-    if let Some(&end) = ends.last() {
-      if end > start {
-        let fixed_indices =
-          trace_fixed(grammar, &pattern, nodes, start, end, &mut memo).unwrap_or_default();
-        matches.push(MatchResult {
-          rule_name: rule_name.to_string(),
-          start,
-          end,
-          fixed_indices,
-          levels: levels.clone(),
-          description: description.clone(),
-          connection: connection.clone(),
-          examples: examples.clone(),
-        });
-        skip_until = end; // Skip overlapping matches
+    if uses_captures {
+      // Capture-aware path: no memoization
+      let empty_caps = CaptureMap::new();
+      let results = match_at_captures(grammar, &pattern, nodes, start, &empty_caps);
+
+      // Take the longest match
+      if let Some((end, _caps)) = results.last() {
+        let end = *end;
+        if end > start {
+          // trace_fixed still works (it ignores capture semantics; back-ref tokens
+          // are still "fixed" since the capture match already confirmed them)
+          let mut memo = HashMap::new();
+          let fixed_indices =
+            trace_fixed(grammar, &pattern, nodes, start, end, &mut memo).unwrap_or_default();
+          matches.push(MatchResult {
+            rule_name: rule_name.to_string(),
+            start,
+            end,
+            fixed_indices,
+            levels: levels.clone(),
+            description: description.clone(),
+            connection: connection.clone(),
+            examples: examples.clone(),
+          });
+          skip_until = end;
+        }
+      }
+    } else {
+      // Fast path with memoization (unchanged)
+      let mut memo = HashMap::new();
+      let ends = match_at(grammar, &pattern, nodes, start, &mut memo);
+
+      // Take the longest match (last end position)
+      if let Some(&end) = ends.last() {
+        if end > start {
+          let fixed_indices =
+            trace_fixed(grammar, &pattern, nodes, start, end, &mut memo).unwrap_or_default();
+          matches.push(MatchResult {
+            rule_name: rule_name.to_string(),
+            start,
+            end,
+            fixed_indices,
+            levels: levels.clone(),
+            description: description.clone(),
+            connection: connection.clone(),
+            examples: examples.clone(),
+          });
+          skip_until = end;
+        }
       }
     }
   }
@@ -697,5 +827,99 @@ mod tests {
     let matches = find_matches(&grammar, "rule", &nodes);
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].start, 0);
+  }
+
+  // ── Capture / back-reference tests ─────────────────────────────────────
+
+  #[test]
+  fn test_capture_same_verb() {
+    // 泣きに泣いた: 泣き(base=泣く) に 泣い(base=泣く) た → should match
+    let grammar = parse_grammar(r#"n0_ni = 動詞$1 助詞"に" 動詞@=$1 助動詞* ;"#).unwrap();
+    assert!(grammar.rules[0].uses_captures);
+    let nodes = vec![
+      make_node("泣き", "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ"),
+      make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
+      make_node("泣い", "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ"),
+      make_node("た", "助動詞,*,*,*,特殊・タ,基本形,た,タ,タ"),
+    ];
+    let matches = find_matches(&grammar, "n0_ni", &nodes);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].start, 0);
+    assert_eq!(matches[0].end, 4);
+  }
+
+  #[test]
+  fn test_capture_different_verb_no_match() {
+    // 会場に来た: 会場(名詞) に 来(base=来る) た → should NOT match
+    // Even if we test with a verb first: 行きに来た → base 行く vs 来る
+    let grammar = parse_grammar(r#"n0_ni = 動詞$1 助詞"に" 動詞@=$1 助動詞* ;"#).unwrap();
+    let nodes = vec![
+      make_node("行き", "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ"),
+      make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
+      make_node("来", "動詞,自立,*,*,カ変・来ル,連用形,来る,キ,キ"),
+      make_node("た", "助動詞,*,*,*,特殊・タ,基本形,た,タ,タ"),
+    ];
+    let matches = find_matches(&grammar, "n0_ni", &nodes);
+    assert!(matches.is_empty());
+  }
+
+  #[test]
+  fn test_wildcard_capture() {
+    // _$1 captures base_form from any token, @=$1 checks it
+    let grammar =
+      parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
+    assert!(grammar.rules[0].uses_captures);
+    let nodes = vec![
+      make_node("考えれ", "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ"),
+      make_node("ば", "助詞,接続助詞,*,*,*,*,ば,バ,バ"),
+      make_node("考える", "動詞,自立,*,*,一段,基本形,考える,カンガエル,カンガエル"),
+    ];
+    let matches = find_matches(&grammar, "repeat", &nodes);
+    assert_eq!(matches.len(), 1);
+  }
+
+  #[test]
+  fn test_wildcard_capture_mismatch() {
+    let grammar =
+      parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
+    let nodes = vec![
+      make_node("考えれ", "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ"),
+      make_node("ば", "助詞,接続助詞,*,*,*,*,ば,バ,バ"),
+      make_node("食べる", "動詞,自立,*,*,一段,基本形,食べる,タベル,タベル"),
+    ];
+    let matches = find_matches(&grammar, "repeat", &nodes);
+    assert!(matches.is_empty());
+  }
+
+  #[test]
+  fn test_capture_in_alternative() {
+    // Capture inside an alternative branch
+    let grammar = parse_grammar(
+      r#"rule = (名詞$1 | 動詞$1) 助詞"に" 動詞@=$1 ;"#,
+    )
+    .unwrap();
+    assert!(grammar.rules[0].uses_captures);
+
+    // Verb branch: same base_form should match
+    let nodes = vec![
+      make_node("泣き", "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ"),
+      make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
+      make_node("泣い", "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ"),
+    ];
+    let matches = find_matches(&grammar, "rule", &nodes);
+    assert_eq!(matches.len(), 1);
+  }
+
+  #[test]
+  fn test_non_capture_rule_unchanged() {
+    // Rules without captures should still work fine via the fast path
+    let grammar = parse_grammar(r#"simple = 動詞 助詞"に" ;"#).unwrap();
+    assert!(!grammar.rules[0].uses_captures);
+    let nodes = vec![
+      make_node("行き", "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ"),
+      make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
+    ];
+    let matches = find_matches(&grammar, "simple", &nodes);
+    assert_eq!(matches.len(), 1);
   }
 }

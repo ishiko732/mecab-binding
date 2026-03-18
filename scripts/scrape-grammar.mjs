@@ -138,12 +138,25 @@ function upsertGrammar(db, { ruleName, levels, name, description, connection, pa
     .get(ruleName);
 
   let grammarId;
+  let isManual = false;
   if (existing) {
+    // Check if this grammar is manually maintained
+    const current = db.prepare("SELECT source FROM grammars WHERE id = ?").get(existing.id);
+    isManual = current.source === "manual";
+
     // Do not overwrite pattern on update — pattern is manually curated
-    db.prepare(
-      `UPDATE grammars SET levels = ?, name = ?, description = ?, connection = ?, source = ?, source_url = ?, updated_at = datetime('now')
-       WHERE rule_name = ?`,
-    ).run(levels, name, description, connection, source, sourceUrl, ruleName);
+    // Do not overwrite source if current source is 'manual'
+    if (isManual) {
+      db.prepare(
+        `UPDATE grammars SET levels = ?, name = ?, description = ?, connection = ?, source_url = ?, updated_at = datetime('now')
+         WHERE rule_name = ?`,
+      ).run(levels, name, description, connection, sourceUrl, ruleName);
+    } else {
+      db.prepare(
+        `UPDATE grammars SET levels = ?, name = ?, description = ?, connection = ?, source = ?, source_url = ?, updated_at = datetime('now')
+         WHERE rule_name = ?`,
+      ).run(levels, name, description, connection, source, sourceUrl, ruleName);
+    }
     grammarId = existing.id;
   } else {
     const result = db
@@ -155,8 +168,8 @@ function upsertGrammar(db, { ruleName, levels, name, description, connection, pa
     grammarId = result.lastInsertRowid;
   }
 
-  // Replace examples (respecting excluded_examples)
-  if (examples && examples.length > 0) {
+  // Replace examples (respecting excluded_examples and manual grammars)
+  if (examples && examples.length > 0 && !isManual) {
     const excluded = new Set(
       db.prepare("SELECT sentence FROM excluded_examples WHERE grammar_id = ?")
         .all(grammarId)

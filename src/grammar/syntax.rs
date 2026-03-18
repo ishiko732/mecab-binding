@@ -2,7 +2,8 @@
 ///
 /// The grammar operates on a stream of MecabNode tokens. Each terminal
 /// matches a single token by its POS hierarchy, surface form, or base form.
-use regex::Regex;
+use regex_lite::Regex;
+use std::collections::HashSet;
 
 /// String matching strategy for token fields.
 #[derive(Debug, Clone)]
@@ -39,15 +40,21 @@ pub struct TokenPredicate {
   pub conjugation_form: Option<StringMatcher>,
   /// Conjugation type constraint (活用型, feature index 4)
   pub conjugation_type: Option<StringMatcher>,
+  /// Capture slot: store this token's base_form into capture $N
+  pub capture: Option<u8>,
+  /// Back-reference: require base_form == captured value in slot $N
+  pub base_form_ref: Option<u8>,
 }
 
 /// A node in the pattern AST.
 #[derive(Debug, Clone)]
 pub enum PatternExpr {
   /// Match a single token against a predicate
-  Token(TokenPredicate),
+  Token(Box<TokenPredicate>),
   /// Wildcard: match any single token
   Wildcard,
+  /// Wildcard with capture: match any token and capture its base_form into slot $N
+  WildcardCapture(u8),
   /// Sequence of patterns (A B C)
   Sequence(Vec<PatternExpr>),
   /// Alternative (A | B)
@@ -90,6 +97,23 @@ pub struct Rule {
   pub name: String,
   pub pattern: PatternExpr,
   pub metadata: Option<RuleMetadata>,
+  /// Whether this rule uses capture back-references ($N / @=$N).
+  pub uses_captures: bool,
+}
+
+/// Recursively check whether a pattern expression uses captures or back-references.
+pub fn pattern_uses_captures(expr: &PatternExpr) -> bool {
+  match expr {
+    PatternExpr::Token(pred) => pred.capture.is_some() || pred.base_form_ref.is_some(),
+    PatternExpr::WildcardCapture(_) => true,
+    PatternExpr::Wildcard => false,
+    PatternExpr::Sequence(items) => items.iter().any(pattern_uses_captures),
+    PatternExpr::Alternative(alts) => alts.iter().any(pattern_uses_captures),
+    PatternExpr::Optional(inner)
+    | PatternExpr::ZeroOrMore(inner)
+    | PatternExpr::OneOrMore(inner) => pattern_uses_captures(inner),
+    PatternExpr::RuleRef(_) => false,
+  }
 }
 
 /// A complete grammar (set of rules).
@@ -120,5 +144,36 @@ impl Grammar {
   /// Get all rule names.
   pub fn rule_names(&self) -> Vec<String> {
     self.rules.iter().map(|r| r.name.clone()).collect()
+  }
+
+  /// Check whether a rule (transitively through RuleRefs) uses captures.
+  pub fn rule_uses_captures(&self, rule_name: &str) -> bool {
+    let mut visited = HashSet::new();
+    self.rule_uses_captures_inner(rule_name, &mut visited)
+  }
+
+  fn rule_uses_captures_inner(&self, rule_name: &str, visited: &mut HashSet<String>) -> bool {
+    if !visited.insert(rule_name.to_string()) {
+      return false; // cycle guard
+    }
+    if let Some(rule) = self.find_rule(rule_name) {
+      self.expr_uses_captures(&rule.pattern, visited)
+    } else {
+      false
+    }
+  }
+
+  fn expr_uses_captures(&self, expr: &PatternExpr, visited: &mut HashSet<String>) -> bool {
+    match expr {
+      PatternExpr::Token(pred) => pred.capture.is_some() || pred.base_form_ref.is_some(),
+      PatternExpr::WildcardCapture(_) => true,
+      PatternExpr::Wildcard => false,
+      PatternExpr::Sequence(items) => items.iter().any(|e| self.expr_uses_captures(e, visited)),
+      PatternExpr::Alternative(alts) => alts.iter().any(|e| self.expr_uses_captures(e, visited)),
+      PatternExpr::Optional(inner)
+      | PatternExpr::ZeroOrMore(inner)
+      | PatternExpr::OneOrMore(inner) => self.expr_uses_captures(inner, visited),
+      PatternExpr::RuleRef(name) => self.rule_uses_captures_inner(name, visited),
+    }
   }
 }
