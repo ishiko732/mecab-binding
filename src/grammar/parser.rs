@@ -471,9 +471,11 @@ impl Parser {
         }
 
         // Check for surface or base_form constraints.
-        // When conjugation_form or conjugation_type is set, the following string
-        // literal starts a new atom in the sequence
+        // When conjugation_form or conjugation_type is set, a plain string literal
+        // starts a new atom in the sequence
         // (e.g. 形容詞[ガル接続] "さ" = two separate tokens).
+        // However, @"..." (base_form) is still allowed on the same atom
+        // (e.g. 形容詞[連用テ接続]@"ない" = single token with conjugation + base match).
         let mut surface = None;
         let mut base_form = None;
 
@@ -484,11 +486,12 @@ impl Parser {
           ) {
             surface = Some(self.parse_string_value()?);
           }
+        }
 
-          if self.peek() == Some(&Token::At) {
-            self.next();
-            base_form = Some(self.parse_string_value()?);
-          }
+        // Base form (@"...") is always allowed, even with conjugation constraints
+        if self.peek() == Some(&Token::At) {
+          self.next();
+          base_form = Some(self.parse_string_value()?);
         }
 
         // If it's a bare identifier with no dots, no surface, no base_form,
@@ -937,6 +940,20 @@ mod tests {
       PatternExpr::Token(pred) => {
         assert_eq!(pred.pos, vec!["動詞"]);
         assert!(matches!(&pred.base_form, Some(StringMatcher::Regex(_))));
+      }
+      _ => panic!("Expected Token"),
+    }
+  }
+
+  #[test]
+  fn test_conjugation_form_with_base_form() {
+    // Conjugation form + base form on the same atom should work
+    let grammar = parse_grammar(r#"rule = 形容詞[連用テ接続]@"ない" ;"#).unwrap();
+    match &grammar.rules[0].pattern {
+      PatternExpr::Token(pred) => {
+        assert_eq!(pred.pos, vec!["形容詞"]);
+        assert!(matches!(&pred.conjugation_form, Some(StringMatcher::Exact(s)) if s == "連用テ接続"));
+        assert!(matches!(&pred.base_form, Some(StringMatcher::Exact(s)) if s == "ない"));
       }
       _ => panic!("Expected Token"),
     }
