@@ -542,16 +542,108 @@ pub fn find_matches(grammar: &Grammar, rule_name: &str, nodes: &[MecabNode]) -> 
   matches
 }
 
+/// Parse a JLPT level string like "N3" into a numeric priority (lower = more specific).
+fn level_priority(levels: &[String]) -> u8 {
+  levels
+    .iter()
+    .filter_map(|l| l.strip_prefix('N').and_then(|n| n.parse::<u8>().ok()))
+    .min()
+    .unwrap_or(5)
+}
+
 /// Find all non-overlapping matches of ALL rules in the token stream.
+///
+/// After collecting all matches, this applies overlap suppression:
+/// when a lower-level (more basic) grammar match overlaps with a higher-level
+/// (more specific) match, the lower-level match is suppressed. This prevents
+/// basic patterns like ている (N4) from being reported when they are already
+/// part of a more specific pattern like あぐねている (N0).
 pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResult> {
   let mut all_matches = Vec::new();
   for rule in &grammar.rules {
     let matches = find_matches(grammar, &rule.name, nodes);
     all_matches.extend(matches);
   }
-  // Sort by start position, then by longest span
-  all_matches.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
-  all_matches
+
+  // Sort by specificity: higher level first (N0 < N1 < ... < N5),
+  // then by longer span, then by earlier start
+  all_matches.sort_by(|a, b| {
+    level_priority(&a.levels)
+      .cmp(&level_priority(&b.levels))
+      .then(
+        (b.end - b.start)
+          .cmp(&(a.end - a.start))
+      )
+      .then(a.start.cmp(&b.start))
+  });
+
+  // Two-phase suppression:
+  //
+  // Phase 1: Suppress matches that overlap with a strictly higher-level match.
+  //   e.g. N4 ている suppressed when overlapping with N0 あぐねている
+  //
+  // Phase 2: Among same-level matches, suppress shorter matches that are fully
+  //   contained within a longer match's span.
+  //   e.g. N3 のに (2 tokens) suppressed when contained in N3 ～でも～のに (8 tokens)
+  //
+  // Phase 3 (sentence-level): When a basic rule (N4/N5) matches anywhere in a
+  //   sentence that also contains more specific matches (N0-N2), suppress the
+  //   basic rule even without span overlap. This reduces noise from ubiquitous
+  //   patterns like です, に, ている.
+
+  let mut accepted: Vec<MatchResult> = Vec::new();
+  for m in all_matches {
+    let m_pri = level_priority(&m.levels);
+    let m_len = m.end - m.start;
+    let dominated = accepted.iter().any(|a| {
+      let a_pri = level_priority(&a.levels);
+      let a_len = a.end - a.start;
+      let overlaps = m.start < a.end && m.end > a.start;
+      let contained = m.start >= a.start && m.end <= a.end;
+
+      // Phase 1: strictly higher level + overlap
+      if a_pri < m_pri && overlaps {
+        return true;
+      }
+      // Phase 2: same level + fully contained in longer span
+      if a_pri == m_pri && contained && a_len > m_len {
+        return true;
+      }
+      false
+    });
+    if !dominated {
+      accepted.push(m);
+    }
+  }
+
+  // Phase 3: sentence-level noise reduction
+  // If the sentence has any N0-N2 match, suppress N4/N5 basic patterns
+  // that don't overlap with anything (they are just noise)
+  let has_specific = accepted.iter().any(|m| level_priority(&m.levels) <= 2);
+  if has_specific {
+    let specific_spans: Vec<(usize, usize)> = accepted
+      .iter()
+      .filter(|m| level_priority(&m.levels) <= 2)
+      .map(|m| (m.start, m.end))
+      .collect();
+
+    accepted.retain(|m| {
+      let pri = level_priority(&m.levels);
+      if pri < 4 {
+        return true; // Keep N0-N3
+      }
+      // For N4/N5: keep if it overlaps with a specific match (it's part of the context)
+      // suppress if it's isolated noise
+      let overlaps_specific = specific_spans
+        .iter()
+        .any(|&(s, e)| m.start < e && m.end > s);
+      overlaps_specific // only keep if overlapping with a specific match
+    });
+  }
+
+  // Re-sort by start position for consistent output
+  accepted.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+  accepted
 }
 
 #[cfg(test)]
