@@ -59,7 +59,7 @@ impl Parser {
       }
       Some(Token::RegexLit(_)) => {
         if let Some(Token::RegexLit(s)) = self.next() {
-          let re = regex_lite::Regex::new(&s.clone())
+          let re = fancy_regex::Regex::new(&s.clone())
             .map_err(|e| format!("Invalid regex '{}': {}", s, e))?;
           Ok(StringMatcher::Regex(re))
         } else {

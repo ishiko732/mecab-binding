@@ -2,7 +2,7 @@
 ///
 /// The grammar operates on a stream of MecabNode tokens. Each terminal
 /// matches a single token by its POS hierarchy, surface form, or base form.
-use regex_lite::Regex;
+use fancy_regex::Regex;
 use std::collections::HashSet;
 
 /// String matching strategy for token fields.
@@ -22,7 +22,7 @@ impl StringMatcher {
     match self {
       StringMatcher::Exact(s) => value == s,
       StringMatcher::Suffix(s) => value.ends_with(s.as_str()),
-      StringMatcher::Regex(r) => r.is_match(value),
+      StringMatcher::Regex(r) => r.is_match(value).unwrap_or(false),
     }
   }
 }
