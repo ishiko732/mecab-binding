@@ -2,6 +2,7 @@
 ///
 /// Uses backtracking with memoization. Wildcard `_*` is non-greedy by default.
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::node::MecabNode;
 
@@ -17,6 +18,18 @@ fn match_at(
   nodes: &[MecabNode],
   pos: usize,
   memo: &mut HashMap<(usize, usize), Vec<usize>>,
+) -> Vec<usize> {
+  let mut active_rules = HashSet::new();
+  match_at_inner(grammar, pattern, nodes, pos, memo, &mut active_rules)
+}
+
+fn match_at_inner(
+  grammar: &Grammar,
+  pattern: &PatternExpr,
+  nodes: &[MecabNode],
+  pos: usize,
+  memo: &mut HashMap<(usize, usize), Vec<usize>>,
+  active_rules: &mut HashSet<(String, usize)>,
 ) -> Vec<usize> {
   // Use pattern address as key (patterns are in a stable allocation)
   let key = (pos, pattern as *const PatternExpr as usize);
@@ -46,7 +59,7 @@ fn match_at(
       for item in items {
         let mut next_positions = Vec::new();
         for &p in &current_positions {
-          let ends = match_at(grammar, item, nodes, p, memo);
+          let ends = match_at_inner(grammar, item, nodes, p, memo, active_rules);
           for end in ends {
             if !next_positions.contains(&end) {
               next_positions.push(end);
@@ -66,7 +79,7 @@ fn match_at(
     PatternExpr::Alternative(alts) => {
       let mut results = Vec::new();
       for alt in alts {
-        let ends = match_at(grammar, alt, nodes, pos, memo);
+        let ends = match_at_inner(grammar, alt, nodes, pos, memo, active_rules);
         for end in ends {
           if !results.contains(&end) {
             results.push(end);
@@ -80,7 +93,7 @@ fn match_at(
     PatternExpr::Optional(inner) => {
       // Non-greedy: try zero first, then one
       let mut results = vec![pos];
-      let ends = match_at(grammar, inner, nodes, pos, memo);
+      let ends = match_at_inner(grammar, inner, nodes, pos, memo, active_rules);
       for end in ends {
         if !results.contains(&end) {
           results.push(end);
@@ -98,7 +111,7 @@ fn match_at(
       while !frontier.is_empty() {
         let mut next_frontier = Vec::new();
         for &p in &frontier {
-          let ends = match_at(grammar, inner, nodes, p, memo);
+          let ends = match_at_inner(grammar, inner, nodes, p, memo, active_rules);
           for end in ends {
             if end > p && !visited.contains(&end) {
               visited.push(end);
@@ -115,7 +128,7 @@ fn match_at(
 
     PatternExpr::OneOrMore(inner) => {
       // Must match at least once
-      let first_ends = match_at(grammar, inner, nodes, pos, memo);
+      let first_ends = match_at_inner(grammar, inner, nodes, pos, memo, active_rules);
       let mut results = Vec::new();
       let mut frontier = first_ends.clone();
       let mut visited: Vec<usize> = first_ends.clone();
@@ -127,7 +140,7 @@ fn match_at(
       while !frontier.is_empty() {
         let mut next_frontier = Vec::new();
         for &p in &frontier {
-          let ends = match_at(grammar, inner, nodes, p, memo);
+          let ends = match_at_inner(grammar, inner, nodes, p, memo, active_rules);
           for end in ends {
             if end > p && !visited.contains(&end) {
               visited.push(end);
@@ -144,11 +157,17 @@ fn match_at(
     }
 
     PatternExpr::RuleRef(name) => {
-      if let Some(rule) = grammar.find_rule(name) {
-        // Clone the pattern to avoid borrow issues
+      let cycle_key = (name.clone(), pos);
+      if !active_rules.insert(cycle_key.clone()) {
+        // Recursive cycle detected — break it
+        vec![]
+      } else if let Some(rule) = grammar.find_rule(name) {
         let pattern = rule.pattern.clone();
-        match_at(grammar, &pattern, nodes, pos, memo)
+        let result = match_at_inner(grammar, &pattern, nodes, pos, memo, active_rules);
+        active_rules.remove(&cycle_key);
+        result
       } else {
+        active_rules.remove(&cycle_key);
         vec![] // Unknown rule reference
       }
     }
@@ -168,6 +187,18 @@ fn match_at_captures(
   nodes: &[MecabNode],
   pos: usize,
   captures: &CaptureMap,
+) -> Vec<(usize, CaptureMap)> {
+  let mut active_rules = HashSet::new();
+  match_at_captures_inner(grammar, pattern, nodes, pos, captures, &mut active_rules)
+}
+
+fn match_at_captures_inner(
+  grammar: &Grammar,
+  pattern: &PatternExpr,
+  nodes: &[MecabNode],
+  pos: usize,
+  captures: &CaptureMap,
+  active_rules: &mut HashSet<(String, usize)>,
 ) -> Vec<(usize, CaptureMap)> {
   match pattern {
     PatternExpr::Token(pred) => {
@@ -208,7 +239,7 @@ fn match_at_captures(
       for item in items {
         let mut next = Vec::new();
         for (p, caps) in &current {
-          let results = match_at_captures(grammar, item, nodes, *p, caps);
+          let results = match_at_captures_inner(grammar, item, nodes, *p, caps, active_rules);
           for (end, new_caps) in results {
             // Dedup by (position, captures) — not position alone, because
             // different capture states may affect subsequent back-references.
@@ -229,7 +260,7 @@ fn match_at_captures(
     PatternExpr::Alternative(alts) => {
       let mut results = Vec::new();
       for alt in alts {
-        let ends = match_at_captures(grammar, alt, nodes, pos, captures);
+        let ends = match_at_captures_inner(grammar, alt, nodes, pos, captures, active_rules);
         for (end, caps) in ends {
           if !results.iter().any(|(e, c)| *e == end && *c == caps) {
             results.push((end, caps));
@@ -242,7 +273,7 @@ fn match_at_captures(
 
     PatternExpr::Optional(inner) => {
       let mut results = vec![(pos, captures.clone())];
-      let ends = match_at_captures(grammar, inner, nodes, pos, captures);
+      let ends = match_at_captures_inner(grammar, inner, nodes, pos, captures, active_rules);
       for (end, caps) in ends {
         if !results.iter().any(|(e, c)| *e == end && *c == caps) {
           results.push((end, caps));
@@ -252,17 +283,17 @@ fn match_at_captures(
     }
 
     PatternExpr::ZeroOrMore(inner) => {
-      let mut results = vec![(pos, captures.clone())];
-      let mut frontier = vec![(pos, captures.clone())];
-      let mut visited = vec![pos];
+      let mut results: Vec<(usize, CaptureMap)> = vec![(pos, captures.clone())];
+      let mut frontier: Vec<(usize, CaptureMap)> = vec![(pos, captures.clone())];
+      let mut visited: Vec<(usize, CaptureMap)> = vec![(pos, captures.clone())];
 
       while !frontier.is_empty() {
         let mut next_frontier = Vec::new();
         for (p, caps) in &frontier {
-          let ends = match_at_captures(grammar, inner, nodes, *p, caps);
+          let ends = match_at_captures_inner(grammar, inner, nodes, *p, caps, active_rules);
           for (end, new_caps) in ends {
-            if end > *p && !visited.contains(&end) {
-              visited.push(end);
+            if end > *p && !visited.iter().any(|(e, c)| *e == end && *c == new_caps) {
+              visited.push((end, new_caps.clone()));
               results.push((end, new_caps.clone()));
               next_frontier.push((end, new_caps));
             }
@@ -275,20 +306,20 @@ fn match_at_captures(
     }
 
     PatternExpr::OneOrMore(inner) => {
-      let first = match_at_captures(grammar, inner, nodes, pos, captures);
+      let first = match_at_captures_inner(grammar, inner, nodes, pos, captures, active_rules);
       let mut results = Vec::new();
       let mut frontier = first.clone();
-      let mut visited: Vec<usize> = first.iter().map(|(e, _)| *e).collect();
+      let mut visited: Vec<(usize, CaptureMap)> = first.clone();
 
       results.extend(first);
 
       while !frontier.is_empty() {
         let mut next_frontier = Vec::new();
         for (p, caps) in &frontier {
-          let ends = match_at_captures(grammar, inner, nodes, *p, caps);
+          let ends = match_at_captures_inner(grammar, inner, nodes, *p, caps, active_rules);
           for (end, new_caps) in ends {
-            if end > *p && !visited.contains(&end) {
-              visited.push(end);
+            if end > *p && !visited.iter().any(|(e, c)| *e == end && *c == new_caps) {
+              visited.push((end, new_caps.clone()));
               results.push((end, new_caps.clone()));
               next_frontier.push((end, new_caps));
             }
@@ -301,10 +332,17 @@ fn match_at_captures(
     }
 
     PatternExpr::RuleRef(name) => {
-      if let Some(rule) = grammar.find_rule(name) {
+      let cycle_key = (name.clone(), pos);
+      if !active_rules.insert(cycle_key.clone()) {
+        // Recursive cycle detected — break it
+        vec![]
+      } else if let Some(rule) = grammar.find_rule(name) {
         let p = rule.pattern.clone();
-        match_at_captures(grammar, &p, nodes, pos, captures)
+        let result = match_at_captures_inner(grammar, &p, nodes, pos, captures, active_rules);
+        active_rules.remove(&cycle_key);
+        result
       } else {
+        active_rules.remove(&cycle_key);
         vec![]
       }
     }
@@ -414,6 +452,178 @@ fn trace_fixed(
   }
 }
 
+/// Trace which node indices are matched by fixed (non-wildcard) patterns,
+/// using capture-aware matching for rules that use captures.
+fn trace_fixed_capture_aware(
+  grammar: &Grammar,
+  pattern: &PatternExpr,
+  nodes: &[MecabNode],
+  start: usize,
+  end: usize,
+  captures: &CaptureMap,
+) -> Option<Vec<usize>> {
+  // Use capture-aware matching to find the correct branch
+  let results = match_at_captures(grammar, pattern, nodes, start, captures);
+  // Find a result that ends at our target end position
+  let matching_caps = results.iter().find(|(e, _)| *e == end)?;
+
+  // Now trace through the pattern with the correct captures to get fixed indices
+  trace_fixed_with_captures(grammar, pattern, nodes, start, end, &matching_caps.1)
+}
+
+fn trace_fixed_with_captures(
+  grammar: &Grammar,
+  pattern: &PatternExpr,
+  nodes: &[MecabNode],
+  pos: usize,
+  end: usize,
+  captures: &CaptureMap,
+) -> Option<Vec<usize>> {
+  match pattern {
+    PatternExpr::Token(pred) => {
+      if pos < nodes.len() && pos + 1 == end {
+        if token_matches_with_captures(&nodes[pos], pred, captures).is_some() {
+          Some(vec![pos])
+        } else {
+          None
+        }
+      } else {
+        None
+      }
+    }
+
+    PatternExpr::Wildcard => {
+      if pos < nodes.len() && pos + 1 == end {
+        Some(vec![])
+      } else {
+        None
+      }
+    }
+
+    PatternExpr::WildcardCapture(_) => {
+      if pos < nodes.len() && pos + 1 == end {
+        Some(vec![])
+      } else {
+        None
+      }
+    }
+
+    PatternExpr::Sequence(items) => {
+      trace_fixed_seq_with_captures(grammar, items, nodes, pos, end, captures)
+    }
+
+    PatternExpr::Alternative(alts) => {
+      for alt in alts {
+        let results = match_at_captures(grammar, alt, nodes, pos, captures);
+        if let Some((_, caps)) = results.iter().find(|(e, _)| *e == end) {
+          if let Some(fixed) = trace_fixed_with_captures(grammar, alt, nodes, pos, end, caps) {
+            return Some(fixed);
+          }
+        }
+      }
+      None
+    }
+
+    PatternExpr::Optional(inner) => {
+      if pos == end {
+        Some(vec![])
+      } else {
+        trace_fixed_with_captures(grammar, inner, nodes, pos, end, captures)
+      }
+    }
+
+    PatternExpr::ZeroOrMore(inner) => {
+      if pos == end {
+        return Some(vec![]);
+      }
+      let results = match_at_captures(grammar, inner, nodes, pos, captures);
+      for (mid, caps) in &results {
+        if *mid > pos && *mid <= end {
+          if let Some(mut first) = trace_fixed_with_captures(grammar, inner, nodes, pos, *mid, caps)
+          {
+            if *mid == end {
+              return Some(first);
+            }
+            if let Some(rest) = trace_fixed_with_captures(grammar, pattern, nodes, *mid, end, caps)
+            {
+              first.extend(rest);
+              return Some(first);
+            }
+          }
+        }
+      }
+      None
+    }
+
+    PatternExpr::OneOrMore(inner) => {
+      let results = match_at_captures(grammar, inner, nodes, pos, captures);
+      for (mid, caps) in &results {
+        if *mid > pos && *mid <= end {
+          if let Some(mut first) = trace_fixed_with_captures(grammar, inner, nodes, pos, *mid, caps)
+          {
+            if *mid == end {
+              return Some(first);
+            }
+            let zero_or_more = PatternExpr::ZeroOrMore(Box::new(inner.as_ref().clone()));
+            if let Some(rest) =
+              trace_fixed_with_captures(grammar, &zero_or_more, nodes, *mid, end, caps)
+            {
+              first.extend(rest);
+              return Some(first);
+            }
+          }
+        }
+      }
+      None
+    }
+
+    PatternExpr::RuleRef(name) => {
+      if let Some(rule) = grammar.find_rule(name) {
+        let p = rule.pattern.clone();
+        trace_fixed_with_captures(grammar, &p, nodes, pos, end, captures)
+      } else {
+        None
+      }
+    }
+  }
+}
+
+fn trace_fixed_seq_with_captures(
+  grammar: &Grammar,
+  items: &[PatternExpr],
+  nodes: &[MecabNode],
+  pos: usize,
+  end: usize,
+  captures: &CaptureMap,
+) -> Option<Vec<usize>> {
+  if items.is_empty() {
+    return if pos == end { Some(vec![]) } else { None };
+  }
+
+  let first = &items[0];
+  let rest = &items[1..];
+  let results = match_at_captures(grammar, first, nodes, pos, captures);
+
+  for (mid, caps) in &results {
+    if *mid > end {
+      continue;
+    }
+    if let Some(mut first_fixed) =
+      trace_fixed_with_captures(grammar, first, nodes, pos, *mid, captures)
+    {
+      if rest.is_empty() && *mid == end {
+        return Some(first_fixed);
+      }
+      if let Some(rest_fixed) = trace_fixed_seq_with_captures(grammar, rest, nodes, *mid, end, caps)
+      {
+        first_fixed.extend(rest_fixed);
+        return Some(first_fixed);
+      }
+    }
+  }
+  None
+}
+
 /// Trace fixed indices for a sequence of patterns.
 fn trace_sequence(
   grammar: &Grammar,
@@ -496,14 +706,12 @@ pub fn find_matches(grammar: &Grammar, rule_name: &str, nodes: &[MecabNode]) -> 
       let results = match_at_captures(grammar, &pattern, nodes, start, &empty_caps);
 
       // Take the longest match
-      if let Some((end, _caps)) = results.last() {
+      if let Some((end, caps)) = results.last() {
         let end = *end;
         if end > start {
-          // trace_fixed still works (it ignores capture semantics; back-ref tokens
-          // are still "fixed" since the capture match already confirmed them)
-          let mut memo = HashMap::new();
-          let fixed_indices =
-            trace_fixed(grammar, &pattern, nodes, start, end, &mut memo).unwrap_or_default();
+          // Use capture-aware trace_fixed to pick the correct alternative branch
+          let fixed_indices = trace_fixed_capture_aware(grammar, &pattern, nodes, start, end, caps)
+            .unwrap_or_default();
           matches.push(MatchResult {
             rule_name: rule_name.to_string(),
             start,
@@ -547,12 +755,12 @@ pub fn find_matches(grammar: &Grammar, rule_name: &str, nodes: &[MecabNode]) -> 
 }
 
 /// Parse a JLPT level string like "N3" into a numeric priority (lower = more specific).
-fn level_priority(levels: &[String]) -> u8 {
+/// Returns None for rules without JLPT labels.
+fn level_priority(levels: &[String]) -> Option<u8> {
   levels
     .iter()
     .filter_map(|l| l.strip_prefix('N').and_then(|n| n.parse::<u8>().ok()))
     .min()
-    .unwrap_or(5)
 }
 
 /// Find all non-overlapping matches of ALL rules in the token stream.
@@ -570,10 +778,13 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
   }
 
   // Sort by specificity: higher level first (N0 < N1 < ... < N5),
-  // then by longer span, then by earlier start
+  // then by longer span, then by earlier start.
+  // Rules without JLPT labels sort after all labeled rules (None > Some).
   all_matches.sort_by(|a, b| {
-    level_priority(&a.levels)
-      .cmp(&level_priority(&b.levels))
+    let a_pri = level_priority(&a.levels);
+    let b_pri = level_priority(&b.levels);
+    a_pri
+      .cmp(&b_pri)
       .then((b.end - b.start).cmp(&(a.end - a.start)))
       .then(a.start.cmp(&b.start))
   });
@@ -602,9 +813,11 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
       let overlaps = m.start < a.end && m.end > a.start;
       let contained = m.start >= a.start && m.end <= a.end;
 
-      // Phase 1: strictly higher level + overlap
-      if a_pri < m_pri && overlaps {
-        return true;
+      // Phase 1: strictly higher level + overlap (only when both have labels)
+      if let (Some(ap), Some(mp)) = (a_pri, m_pri) {
+        if ap < mp && overlaps {
+          return true;
+        }
       }
       // Phase 2: same level + fully contained in longer span
       if a_pri == m_pri && contained && a_len > m_len {
@@ -619,17 +832,23 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
 
   // Phase 3: sentence-level noise reduction
   // If the sentence has any N0-N2 match, suppress N4/N5 basic patterns
-  // that don't overlap with anything (they are just noise)
-  let has_specific = accepted.iter().any(|m| level_priority(&m.levels) <= 2);
+  // that don't overlap with anything (they are just noise).
+  // Rules without JLPT labels are exempt from this suppression.
+  let has_specific = accepted
+    .iter()
+    .any(|m| matches!(level_priority(&m.levels), Some(p) if p <= 2));
   if has_specific {
     let specific_spans: Vec<(usize, usize)> = accepted
       .iter()
-      .filter(|m| level_priority(&m.levels) <= 2)
+      .filter(|m| matches!(level_priority(&m.levels), Some(p) if p <= 2))
       .map(|m| (m.start, m.end))
       .collect();
 
     accepted.retain(|m| {
-      let pri = level_priority(&m.levels);
+      let pri = match level_priority(&m.levels) {
+        Some(p) => p,
+        None => return true, // Unlabeled rules are always kept
+      };
       if pri < 4 {
         return true; // Keep N0-N3
       }
@@ -670,12 +889,12 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
         return span <= rule_limit;
       }
 
-      // Default: only limit N4/N5 basic patterns to 2 bunsetsu
-      let pri = level_priority(&m.levels);
-      if pri >= 4 {
-        return span <= 2;
+      // Default: only limit N4/N5 basic patterns to 2 bunsetsu.
+      // Rules without JLPT labels are exempt from the default cap.
+      match level_priority(&m.levels) {
+        Some(pri) if pri >= 4 => span <= 2,
+        _ => true,
       }
-      true
     });
   }
 

@@ -130,10 +130,12 @@ impl Grammar {
     Grammar { rules: Vec::new() }
   }
 
-  /// Merge another grammar's rules into this one, skipping duplicate names.
+  /// Merge another grammar's rules into this one, replacing duplicates.
   pub fn merge(&mut self, other: Grammar) {
     for rule in other.rules {
-      if !self.rules.iter().any(|r| r.name == rule.name) {
+      if let Some(pos) = self.rules.iter().position(|r| r.name == rule.name) {
+        self.rules[pos] = rule;
+      } else {
         self.rules.push(rule);
       }
     }
