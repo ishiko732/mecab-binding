@@ -203,3 +203,4 @@ sources/grammars.sqlite
 sources/grammars.sqlite-wal
 sources/grammars.sqlite-shm
 sources/*.bak
+*.csv
