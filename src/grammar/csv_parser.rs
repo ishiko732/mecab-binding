@@ -129,6 +129,7 @@ pub fn parse_csv_grammar(csv_text: &str) -> Result<Grammar, String> {
       pattern,
       metadata,
       uses_captures,
+      max_bunsetsu_span: 0,
     });
   }
 

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use crate::node::MecabNode;
 
+use super::bunsetsu;
 use super::syntax::*;
 use super::token::*;
 
@@ -192,7 +193,10 @@ fn match_at_captures(
     PatternExpr::WildcardCapture(slot) => {
       if pos < nodes.len() {
         let mut new_caps = captures.clone();
-        new_caps.insert(*slot, base_form_from_parts(&parse_feature(&nodes[pos].feature)).to_string());
+        new_caps.insert(
+          *slot,
+          base_form_from_parts(&parse_feature(&nodes[pos].feature)).to_string(),
+        );
         vec![(pos + 1, new_caps)]
       } else {
         vec![]
@@ -570,10 +574,7 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
   all_matches.sort_by(|a, b| {
     level_priority(&a.levels)
       .cmp(&level_priority(&b.levels))
-      .then(
-        (b.end - b.start)
-          .cmp(&(a.end - a.start))
-      )
+      .then((b.end - b.start).cmp(&(a.end - a.start)))
       .then(a.start.cmp(&b.start))
   });
 
@@ -638,6 +639,43 @@ pub fn find_all_matches(grammar: &Grammar, nodes: &[MecabNode]) -> Vec<MatchResu
         .iter()
         .any(|&(s, e)| m.start < e && m.end > s);
       overlaps_specific // only keep if overlapping with a specific match
+    });
+  }
+
+  // Phase 4: Bunsetsu span filtering
+  // Two mechanisms:
+  //   a) Rules with max_bunsetsu_span > 0: enforce their declared limit.
+  //   b) N4/N5 rules without a declared limit: default to max 2 bunsetsu.
+  let chunks = bunsetsu::segment_bunsetsu(nodes);
+  if !chunks.is_empty() {
+    accepted.retain(|m| {
+      let bs = bunsetsu::bunsetsu_of(&chunks, m.start);
+      let be = if m.end > m.start {
+        bunsetsu::bunsetsu_of(&chunks, m.end - 1)
+      } else {
+        bs
+      };
+      let span = match (bs, be) {
+        (Some(s), Some(e)) => (e - s + 1) as u8,
+        _ => return true,
+      };
+
+      // Check rule-specific limit
+      let rule_limit = grammar
+        .find_rule(&m.rule_name)
+        .map(|r| r.max_bunsetsu_span)
+        .unwrap_or(0);
+
+      if rule_limit > 0 {
+        return span <= rule_limit;
+      }
+
+      // Default: only limit N4/N5 basic patterns to 2 bunsetsu
+      let pri = level_priority(&m.levels);
+      if pri >= 4 {
+        return span <= 2;
+      }
+      true
     });
   }
 
@@ -913,8 +951,14 @@ mod tests {
   fn test_suffix_surface_match() {
     let grammar = parse_grammar(r#"rule = ~"ない" ;"#).unwrap();
     let nodes = vec![
-      make_node("少ない", "形容詞,自立,*,*,形容詞・アウオ段,基本形,少ない,スクナイ,スクナイ"),
-      make_node("多い", "形容詞,自立,*,*,形容詞・アウオ段,基本形,多い,オオイ,オーイ"),
+      make_node(
+        "少ない",
+        "形容詞,自立,*,*,形容詞・アウオ段,基本形,少ない,スクナイ,スクナイ",
+      ),
+      make_node(
+        "多い",
+        "形容詞,自立,*,*,形容詞・アウオ段,基本形,多い,オオイ,オーイ",
+      ),
     ];
     let matches = find_matches(&grammar, "rule", &nodes);
     assert_eq!(matches.len(), 1);
@@ -929,9 +973,15 @@ mod tests {
     let grammar = parse_grammar(r#"n0_ni = 動詞$1 助詞"に" 動詞@=$1 助動詞* ;"#).unwrap();
     assert!(grammar.rules[0].uses_captures);
     let nodes = vec![
-      make_node("泣き", "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ"),
+      make_node(
+        "泣き",
+        "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ",
+      ),
       make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
-      make_node("泣い", "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ"),
+      make_node(
+        "泣い",
+        "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ",
+      ),
       make_node("た", "助動詞,*,*,*,特殊・タ,基本形,た,タ,タ"),
     ];
     let matches = find_matches(&grammar, "n0_ni", &nodes);
@@ -946,7 +996,10 @@ mod tests {
     // Even if we test with a verb first: 行きに来た → base 行く vs 来る
     let grammar = parse_grammar(r#"n0_ni = 動詞$1 助詞"に" 動詞@=$1 助動詞* ;"#).unwrap();
     let nodes = vec![
-      make_node("行き", "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ"),
+      make_node(
+        "行き",
+        "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ",
+      ),
       make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
       make_node("来", "動詞,自立,*,*,カ変・来ル,連用形,来る,キ,キ"),
       make_node("た", "助動詞,*,*,*,特殊・タ,基本形,た,タ,タ"),
@@ -958,13 +1011,18 @@ mod tests {
   #[test]
   fn test_wildcard_capture() {
     // _$1 captures base_form from any token, @=$1 checks it
-    let grammar =
-      parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
+    let grammar = parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
     assert!(grammar.rules[0].uses_captures);
     let nodes = vec![
-      make_node("考えれ", "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ"),
+      make_node(
+        "考えれ",
+        "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ",
+      ),
       make_node("ば", "助詞,接続助詞,*,*,*,*,ば,バ,バ"),
-      make_node("考える", "動詞,自立,*,*,一段,基本形,考える,カンガエル,カンガエル"),
+      make_node(
+        "考える",
+        "動詞,自立,*,*,一段,基本形,考える,カンガエル,カンガエル",
+      ),
     ];
     let matches = find_matches(&grammar, "repeat", &nodes);
     assert_eq!(matches.len(), 1);
@@ -972,10 +1030,12 @@ mod tests {
 
   #[test]
   fn test_wildcard_capture_mismatch() {
-    let grammar =
-      parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
+    let grammar = parse_grammar(r#"repeat = _$1 助詞"ば" _@=$1 ;"#).unwrap();
     let nodes = vec![
-      make_node("考えれ", "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ"),
+      make_node(
+        "考えれ",
+        "動詞,自立,*,*,一段,仮定形,考える,カンガエレ,カンガエレ",
+      ),
       make_node("ば", "助詞,接続助詞,*,*,*,*,ば,バ,バ"),
       make_node("食べる", "動詞,自立,*,*,一段,基本形,食べる,タベル,タベル"),
     ];
@@ -986,17 +1046,20 @@ mod tests {
   #[test]
   fn test_capture_in_alternative() {
     // Capture inside an alternative branch
-    let grammar = parse_grammar(
-      r#"rule = (名詞$1 | 動詞$1) 助詞"に" 動詞@=$1 ;"#,
-    )
-    .unwrap();
+    let grammar = parse_grammar(r#"rule = (名詞$1 | 動詞$1) 助詞"に" 動詞@=$1 ;"#).unwrap();
     assert!(grammar.rules[0].uses_captures);
 
     // Verb branch: same base_form should match
     let nodes = vec![
-      make_node("泣き", "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ"),
+      make_node(
+        "泣き",
+        "動詞,自立,*,*,五段・カ行イ音便,連用形,泣く,ナキ,ナキ",
+      ),
       make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
-      make_node("泣い", "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ"),
+      make_node(
+        "泣い",
+        "動詞,自立,*,*,五段・カ行イ音便,連用タ接続,泣く,ナイ,ナイ",
+      ),
     ];
     let matches = find_matches(&grammar, "rule", &nodes);
     assert_eq!(matches.len(), 1);
@@ -1008,7 +1071,10 @@ mod tests {
     let grammar = parse_grammar(r#"simple = 動詞 助詞"に" ;"#).unwrap();
     assert!(!grammar.rules[0].uses_captures);
     let nodes = vec![
-      make_node("行き", "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ"),
+      make_node(
+        "行き",
+        "動詞,自立,*,*,五段・カ行イ音便,連用形,行く,イキ,イキ",
+      ),
       make_node("に", "助詞,格助詞,一般,*,*,*,に,ニ,ニ"),
     ];
     let matches = find_matches(&grammar, "simple", &nodes);

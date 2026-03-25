@@ -99,6 +99,9 @@ pub struct Rule {
   pub metadata: Option<RuleMetadata>,
   /// Whether this rule uses capture back-references ($N / @=$N).
   pub uses_captures: bool,
+  /// Maximum number of bunsetsu (phrase chunks) this rule's match may span.
+  /// 0 means no limit. Set via the CSV `max_bunsetsu` column or grammar annotation.
+  pub max_bunsetsu_span: u8,
 }
 
 /// Recursively check whether a pattern expression uses captures or back-references.

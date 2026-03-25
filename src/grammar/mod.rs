@@ -1,3 +1,4 @@
+pub mod bunsetsu;
 mod csv_parser;
 mod lexer;
 mod matcher;
@@ -52,6 +53,13 @@ pub struct GrammarMatch {
   pub connection: Option<String>,
   /// Example sentences
   pub examples: Vec<GrammarExample>,
+  /// Bunsetsu (phrase chunk) index where this match starts.
+  /// -1 if the match start is not inside any bunsetsu (e.g. punctuation).
+  pub bunsetsu_start: i32,
+  /// Bunsetsu index where this match ends (last token).
+  pub bunsetsu_end: i32,
+  /// Number of bunsetsu this match spans.
+  pub bunsetsu_span: u32,
 }
 
 /// EBNF-style grammar pattern matcher for MeCab token streams.
@@ -102,11 +110,12 @@ impl GrammarMatcher {
   /// Find all matches of a specific rule in the given nodes.
   #[napi]
   pub fn find(&self, rule_name: String, nodes: Vec<MecabNode>) -> Result<Vec<GrammarMatch>> {
+    let chunks = bunsetsu::segment_bunsetsu(&nodes);
     let results = matcher::find_matches(&self.grammar, &rule_name, &nodes);
     Ok(
       results
         .into_iter()
-        .map(|m| to_grammar_match(m, &nodes))
+        .map(|m| to_grammar_match(m, &nodes, &chunks))
         .collect(),
     )
   }
@@ -114,11 +123,12 @@ impl GrammarMatcher {
   /// Find all matches of ALL rules in the given nodes.
   #[napi]
   pub fn find_all(&self, nodes: Vec<MecabNode>) -> Result<Vec<GrammarMatch>> {
+    let chunks = bunsetsu::segment_bunsetsu(&nodes);
     let results = matcher::find_all_matches(&self.grammar, &nodes);
     Ok(
       results
         .into_iter()
-        .map(|m| to_grammar_match(m, &nodes))
+        .map(|m| to_grammar_match(m, &nodes, &chunks))
         .collect(),
     )
   }
@@ -152,9 +162,81 @@ impl GrammarMatcher {
     self.grammar.merge(other);
     Ok(())
   }
+
+  /// Set the maximum bunsetsu span for a rule.
+  /// Matches spanning more bunsetsu than this limit will be suppressed.
+  /// Set to 0 to remove the limit.
+  #[napi]
+  pub fn set_max_bunsetsu(&mut self, rule_name: String, max_span: u8) -> Result<()> {
+    let rule = self
+      .grammar
+      .rules
+      .iter_mut()
+      .find(|r| r.name == rule_name)
+      .ok_or_else(|| Error::from_reason(format!("Rule not found: {}", rule_name)))?;
+    rule.max_bunsetsu_span = max_span;
+    Ok(())
+  }
 }
 
-fn to_grammar_match(m: matcher::MatchResult, nodes: &[MecabNode]) -> GrammarMatch {
+/// A bunsetsu (phrase chunk) result.
+#[napi(object)]
+pub struct BunsetsuChunk {
+  /// Start token index (inclusive).
+  pub start: u32,
+  /// End token index (exclusive).
+  pub end: u32,
+  /// Index of the head (content word) token.
+  pub head: u32,
+  /// Surface text of the bunsetsu.
+  pub surface: String,
+}
+
+/// Segment a token stream into bunsetsu (文節) phrase chunks.
+///
+/// A bunsetsu is a minimal syntactic unit: one content word + attached function words.
+/// This is useful for understanding phrase boundaries without a full dependency parser.
+#[napi]
+pub fn segment_bunsetsu_nodes(nodes: Vec<MecabNode>) -> Vec<BunsetsuChunk> {
+  let chunks = bunsetsu::segment_bunsetsu(&nodes);
+  chunks
+    .into_iter()
+    .map(|b| {
+      let surface: String = nodes[b.start..b.end]
+        .iter()
+        .map(|n| n.surface.as_str())
+        .collect();
+      BunsetsuChunk {
+        start: b.start as u32,
+        end: b.end as u32,
+        head: b.head as u32,
+        surface,
+      }
+    })
+    .collect()
+}
+
+fn to_grammar_match(
+  m: matcher::MatchResult,
+  nodes: &[MecabNode],
+  chunks: &[bunsetsu::Bunsetsu],
+) -> GrammarMatch {
+  let bs = bunsetsu::bunsetsu_of(chunks, m.start)
+    .map(|i| i as i32)
+    .unwrap_or(-1);
+  let be = if m.end > m.start {
+    bunsetsu::bunsetsu_of(chunks, m.end - 1)
+      .map(|i| i as i32)
+      .unwrap_or(-1)
+  } else {
+    bs
+  };
+  let bspan = if bs >= 0 && be >= 0 {
+    (be - bs + 1) as u32
+  } else {
+    0
+  };
+
   GrammarMatch {
     rule: m.rule_name,
     start: m.start as u32,
@@ -176,5 +258,8 @@ fn to_grammar_match(m: matcher::MatchResult, nodes: &[MecabNode]) -> GrammarMatc
           .collect(),
       })
       .collect(),
+    bunsetsu_start: bs,
+    bunsetsu_end: be,
+    bunsetsu_span: bspan,
   }
 }

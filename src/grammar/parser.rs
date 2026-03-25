@@ -109,6 +109,7 @@ impl Parser {
       pattern,
       metadata,
       uses_captures,
+      max_bunsetsu_span: 0,
     })
   }
 
@@ -242,12 +243,20 @@ impl Parser {
                 base_form_ref: Some(n),
               })));
             }
-            other => return Err(format!("Expected capture slot after '_@=', got {:?}", other)),
+            other => {
+              return Err(format!(
+                "Expected capture slot after '_@=', got {:?}",
+                other
+              ))
+            }
           }
         }
         Ok(PatternExpr::Wildcard)
       }
-      Some(Token::StringLit(_)) | Some(Token::Tilde) | Some(Token::RegexLit(_)) | Some(Token::At) => {
+      Some(Token::StringLit(_))
+      | Some(Token::Tilde)
+      | Some(Token::RegexLit(_))
+      | Some(Token::At) => {
         // Surface-only or base-form-only token matcher, or @=$N back-reference
         // Check for @=$N (base_form back-reference on bare token)
         if self.peek() == Some(&Token::At) {
@@ -273,7 +282,9 @@ impl Parser {
             }
           }
         }
-        Ok(PatternExpr::Token(Box::new(self.parse_token_predicate(None)?)))
+        Ok(PatternExpr::Token(Box::new(
+          self.parse_token_predicate(None)?,
+        )))
       }
       Some(Token::Ident(_)) => {
         // Could be: POS path (token matcher), rule reference, or _$N wildcard capture.
@@ -624,7 +635,9 @@ mod tests {
     match &grammar.rules[0].pattern {
       PatternExpr::Token(pred) => {
         assert_eq!(pred.pos, vec!["形容詞"]);
-        assert!(matches!(&pred.conjugation_form, Some(StringMatcher::Exact(s)) if s == "連用テ接続"));
+        assert!(
+          matches!(&pred.conjugation_form, Some(StringMatcher::Exact(s)) if s == "連用テ接続")
+        );
         assert!(matches!(&pred.base_form, Some(StringMatcher::Exact(s)) if s == "ない"));
       }
       _ => panic!("Expected Token"),
