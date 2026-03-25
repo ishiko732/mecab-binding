@@ -175,7 +175,12 @@ fn main() {
       build
         .flag("-Wno-c++11-narrowing")
         .flag("-Wno-deprecated-register")
-        .flag("-Wno-sometimes-uninitialized");
+        .flag("-Wno-sometimes-uninitialized")
+        .flag("-Wno-deprecated-declarations")
+        .flag("-Wno-ignored-qualifiers")
+        .flag("-Wno-missing-field-initializers")
+        .flag("-Wno-string-plus-int")
+        .flag("-Wno-unused-private-field");
       println!("cargo:rustc-link-lib=c++");
       println!("cargo:rustc-link-lib=iconv");
     } else {

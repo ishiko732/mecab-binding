@@ -21,6 +21,7 @@ if (!existsSync(inputDir)) {
 	execSync(`tar xzf "${IPADIC_TARBALL}" --strip-components=1 -C "${inputDir}"`, { stdio: 'inherit' })
 }
 
+
 if (existsSync(outputDir)) {
 	console.log('Dictionary already compiled, skipping')
 	process.exit(0)
@@ -55,3 +56,4 @@ try {
 	console.error('Failed to compile dictionary:', err.message)
 	process.exit(1)
 }
+

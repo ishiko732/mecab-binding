@@ -1,0 +1,19 @@
+// MeCab ipadic grammar pattern definition file
+//
+// Token matcher syntax:
+//   品詞                     - match by POS
+//   品詞.品詞細分類1          - match by POS + sub-classification
+//   "surface"               - match by surface form
+//   @"base"                 - match by base form (feature[6])
+//   品詞@"base"             - POS + base form
+//   品詞"surface"           - POS + surface form
+//   _                       - wildcard (any single token)
+//
+// Operators: A B (sequence), A | B (alternation), A? (optional), A* (0+), A+ (1+), ( ) (grouping)
+//
+// Metadata: [level1 level2, "description"] before the rule
+
+// ── te-form ──────────────────────────────────────────────────────────────
+
+[N5, "te-form: verb conjunction"]
+te_form = 動詞 助詞.接続助詞"て" ;

@@ -197,3 +197,9 @@ Temporary Items
 
 .output/
 dist/
+
+# Grammar scraping artifacts
+sources/grammars.sqlite
+sources/grammars.sqlite-wal
+sources/grammars.sqlite-shm
+sources/*.bak
